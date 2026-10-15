@@ -278,8 +278,10 @@ static void canHandle(const CanFrame& f) {
 void setup() {
   // PB4/PB3/PA15 are JTAG pins at reset. NOJTAG frees them and keeps SW-DP,
   // so the ST-Link stays alive. Must precede any pin setup. See CHANGELOG.
+  // NOTE: the SWJ/TIM3 remap is written as a single explicit AFIO_MAPR store
+  // inside A4950Driver::init(). It is deliberately NOT done here with the ST
+  // macro, because that macro read-modify-writes SWJ_CFG and would fight it.
   __HAL_RCC_AFIO_CLK_ENABLE();
-  __HAL_AFIO_REMAP_SWJ_NOJTAG();
 
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH);

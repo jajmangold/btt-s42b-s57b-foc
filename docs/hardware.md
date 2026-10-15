@@ -60,9 +60,30 @@ polarity. This is why `StepperDriver2PWM` is the right model and
 `TIM3` uses **partial** remap, which places CH1 on PB4 and CH2 on PB5.
 
 **PB4 is `NJTRST`.** It is a JTAG pin out of reset and cannot be used as GPIO or
-PWM until the SWJ remap releases it. Without `__HAL_AFIO_REMAP_SWJ_NOJTAG()`,
-coil A is simply dead. Use `NOJTAG`, never `DISABLE` — the latter kills SW-DP
-and with it your only way into the chip.
+PWM until `SWJ_CFG` selects "JTAG disabled, SW-DP enabled" (`0b010`). Without
+that, coil A is simply dead. Never select `0b100` (both disabled) — that kills
+SW-DP and with it your only way back into the chip.
+
+**Write `AFIO_MAPR` once, explicitly. Never read-modify-write it.** Two
+separate hazards make the obvious approach unsafe:
+
+1. `SWJ_CFG` is **write-only** on STM32F1, so a read-modify-write cannot
+   preserve it reliably.
+2. ST's own `AFIO_REMAP_PARTIAL()` macro — which `__HAL_AFIO_REMAP_TIM3_PARTIAL()`
+   expands to — does `tmpreg |= AFIO_MAPR_SWJ_CFG`, ORing in **all three**
+   `SWJ_CFG` bits. That is `0b111`: JTAG *and* SWD disabled.
+
+So calling the TIM3 remap macro after setting NOJTAG attacks the exact field
+PB4 depends on. In practice `0b111` is reserved and appears to be ignored by
+the silicon, which is why this does not bite immediately — but it is luck, not
+design. This firmware sets both fields in a single store:
+
+```c
+AFIO->MAPR = (0x2u << AFIO_MAPR_SWJ_CFG_Pos)      // JTAG off, SW-DP alive
+           | (0x2u << AFIO_MAPR_TIM3_REMAP_Pos);  // partial: CH1=PB4, CH2=PB5
+```
+
+Verify with a debugger: `AFIO_MAPR` should read `0x02000800`.
 
 ### Host interface — P1
 

@@ -18,8 +18,22 @@ int A4950Driver::init() {
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_TIM3_CLK_ENABLE();
 
-  // TIM3 partial remap puts CH1 on PB4 and CH2 on PB5.
-  __HAL_AFIO_REMAP_TIM3_PARTIAL();
+  // ---- AFIO_MAPR: ONE EXPLICIT WRITE, NEVER READ-MODIFY-WRITE ------------
+  // PB4 is NJTRST. It only becomes usable as PWM once SWJ_CFG selects
+  // "JTAG disabled, SW enabled" (0b010). Get that wrong and COIL A IS DEAD.
+  //
+  // ST's own remap macros are hostile to this. AFIO_REMAP_PARTIAL() does:
+  //     tmpreg = AFIO->MAPR; ... tmpreg |= AFIO_MAPR_SWJ_CFG; AFIO->MAPR = tmpreg;
+  // which ORs in ALL THREE SWJ_CFG bits (0b111 = JTAG *and* SWD disabled).
+  // SWJ_CFG is additionally write-only on STM32F1, so a read-modify-write
+  // cannot preserve it reliably in the first place. Calling the macro after
+  // setting NOJTAG therefore attacks the exact bit PB4 depends on -- and the
+  // only reason it has not bitten is that 0b111 is reserved and ignored.
+  //
+  // So write the whole register once, with both fields we want and nothing
+  // else. No other peripheral on this board needs a remap.
+  AFIO->MAPR = (0x2u << AFIO_MAPR_SWJ_CFG_Pos)      // JTAG off, SW-DP alive
+             | (0x2u << AFIO_MAPR_TIM3_REMAP_Pos);  // partial: CH1=PB4, CH2=PB5
 
   // Direction pins are plain outputs, parked low (coast) until commanded.
   const int dirs[4] = {COIL_A_DIR_1, COIL_A_DIR_2, COIL_B_DIR_1, COIL_B_DIR_2};

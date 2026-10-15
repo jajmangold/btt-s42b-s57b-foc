@@ -16,27 +16,44 @@ it from the chopped voltage across the coil.
 
 ## If the motor will not move
 
-The most common cause is **not enough current**, not a broken install. Detent
-torque varies a lot between motors, and `BRINGUP_mA` is deliberately
-conservative — on some motors it is below what is needed to overcome detent
-from rest.
-
-Diagnose it with the coil probe (`cmd 3`), which energises each coil in each
-polarity and reports where the rotor parks:
+Two causes, and they look identical from the outside. Distinguish them with the
+coil probe (`cmd 3`), which energises each coil in each polarity and reports
+where the rotor parks:
 
 | Reading | Meaning |
 |---|---|
 | Both coils ~328 counts between polarities | healthy |
-| One coil near 0 counts | that phase is open — check wiring and crimps |
-| Both coils well under 328 | not enough current; raise and retry |
+| Both coils well under 328, consistently | not enough current; raise and retry |
+| One or both weak **sometimes** | intermittent connection — see below |
 
-A real example from development: at 800 mA a motor gave 245 and -10 counts
-(looks like a dead phase); the same motor at 1500 mA gave 322 and -321
-(perfectly healthy). The same motor had worked at 600 mA a few hours earlier,
-which is how we knew to suspect mechanical load rather than the firmware.
+### Not enough current
 
-**Raise current before concluding anything is broken**, then investigate why
-the motor needs more than it did.
+Detent torque varies between motors and `BRINGUP_mA` is deliberately
+conservative. Sweeping current on a development motor put the threshold between
+400 and 600 mA:
+
+| | coil A | coil B |
+|---|---|---|
+| 400 mA | +13 | -315 |
+| 600 mA | +325 | -321 |
+| 1500 mA | +330 | -326 |
+
+Note the asymmetry at 400 mA — one coil failing while the other looks fine does
+**not** prove that phase is broken. It can simply be the one fighting detent
+from a worse starting position.
+
+### Intermittent connection
+
+If the probe passes, then fails, then passes again at the same current, suspect
+a crimp rather than the firmware. During development a motor read `A 245 /
+B -10` at 800 mA, and twenty minutes later the same board at the same current
+read `A 327 / B -323`, with a full current sweep showing 800 mA comfortably
+above threshold. Nothing had been touched.
+
+This is worth taking seriously because it mimics every other fault: it looks
+like low torque, a dead phase, a tuning problem, or a firmware regression
+depending on when you happen to test. **Run the probe three times before
+concluding anything**, and re-seat the motor connector before changing code.
 
 ## Position loop
 

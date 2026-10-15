@@ -154,6 +154,17 @@ halting it, so you can watch position and following error with no serial cable
 attached. `tools/swd.py` is a bit-banged SWD master for MicroPython, kept as a
 fallback for anyone without a probe.
 
+## Upstream
+
+Work from this project that belongs in its dependencies is sent there rather
+than kept here:
+
+- **[simplefoc/Arduino-FOC-drivers#106](https://github.com/simplefoc/Arduino-FOC-drivers/pull/106)** —
+  safety-word and CRC validation for SimpleFOC's own TLE5012B driver. That
+  driver already clocks the safety word off the wire and discards it, so
+  checking it costs nothing; the CRC algorithm contributed there is the one
+  determined by measurement in [docs/measurements.md](docs/measurements.md).
+
 ## Contributing
 
 Issues and pull requests welcome — particularly S42B test reports, since that

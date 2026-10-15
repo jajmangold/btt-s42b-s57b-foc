@@ -278,6 +278,21 @@ static void canHandle(const CanFrame& f) {
 void setup() {
   // PB4/PB3/PA15 are JTAG pins at reset. NOJTAG frees them and keeps SW-DP,
   // so the ST-Link stays alive. Must precede any pin setup. See CHANGELOG.
+  // ---- SAFE THE MOTOR BEFORE ANYTHING ELSE -------------------------------
+  // Out of reset every GPIO is a FLOATING INPUT, including the two VREF PWM
+  // pins and the four A4950 direction pins. A floating VREF line can charge
+  // through its RC filter toward 3V3 (= full current limit), and floating
+  // direction inputs can read as drive rather than coast. Everything after
+  // this point -- Serial.begin, delays, encoder init -- takes well over 200 ms,
+  // and leaving the coils undefined for that long is not acceptable.
+  //
+  // So: drive them to a known-safe state as the very first thing that happens,
+  // before clocks, before serial, before anything. Zero duty and both
+  // direction pins low is coast on an A4950: no current path at all.
+  const int safe_low[6] = { COIL_A_PWM, COIL_A_DIR_1, COIL_A_DIR_2,
+                            COIL_B_PWM, COIL_B_DIR_1, COIL_B_DIR_2 };
+  for (int i = 0; i < 6; i++) { pinMode(safe_low[i], OUTPUT); digitalWrite(safe_low[i], LOW); }
+
   // NOTE: the SWJ/TIM3 remap is written as a single explicit AFIO_MAPR store
   // inside A4950Driver::init(). It is deliberately NOT done here with the ST
   // macro, because that macro read-modify-writes SWJ_CFG and would fight it.

@@ -104,6 +104,32 @@ pin alongside GND, that strongly suggests the inputs are isolated and therefore
 **receive-only** — the MCU could not drive the connector even if asked.
 *Inference, not confirmed with a meter.*
 
+### DIP switches
+
+Four switches, read by the factory firmware in `SetModeCheck()`. **This
+firmware ignores them** — microstep is meaningless under FOC, and open/closed
+loop is not a choice here — but two of the pins matter for a different reason.
+
+| Pin | DIP | Factory meaning |
+|---|---|---|
+| PB10 | 1 | microstep select, with DIP 2 |
+| PB11 | 2 | microstep select, with DIP 1 |
+| PB3 | 3 | low = closed loop |
+| PA15 | 4 | low = run encoder calibration at boot |
+
+All four are input-with-pull-up in the factory firmware, so a switch that is ON
+reads 0. SET1/SET2 map to microstep as: both high = 16, (0,1) = 8, (1,0) = 4,
+both low = 32.
+
+**PA15 is JTDI and PB3 is JTDO.** Like PB4, they belong to the JTAG peripheral
+out of reset and are only released once `SWJ_CFG` is set. Since DIP 3 shorts
+PB3 to ground when ON, leaving it as a JTAG pin longer than necessary is worth
+avoiding — another reason the `AFIO_MAPR` write happens before anything else.
+
+You can read the switch positions without a firmware change by configuring the
+pins as input-with-pull over SWD and sampling under both pull directions: a pin
+that reads 0 under a pull-up is driven low, i.e. switch ON.
+
 ### CAN and debug
 
 | Pin | Function |

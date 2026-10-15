@@ -13,27 +13,38 @@ uint32_t A4950Driver::carrierHz() const {
   return 72000000UL / ((TIM3->PSC + 1) * (TIM3->ARR + 1));
 }
 
-int A4950Driver::init() {
+void a4950_claim_pins() {
   __HAL_RCC_AFIO_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-  __HAL_RCC_TIM3_CLK_ENABLE();
 
   // ---- AFIO_MAPR: ONE EXPLICIT WRITE, NEVER READ-MODIFY-WRITE ------------
   // PB4 is NJTRST. It only becomes usable as PWM once SWJ_CFG selects
-  // "JTAG disabled, SW enabled" (0b010). Get that wrong and COIL A IS DEAD.
+  // "JTAG disabled, SW enabled" (0b010). Until then the pin belongs to the
+  // JTAG peripheral and pinMode() on it does nothing -- which means the coil
+  // cannot be put in a safe state either. So this must come FIRST.
   //
-  // ST's own remap macros are hostile to this. AFIO_REMAP_PARTIAL() does:
+  // It also frees PB3 (JTDO) and PA15 (JTDI), which carry DIP switches on
+  // this board. DIP 3 shorts PB3 to ground, so leaving it as a JTAG output
+  // any longer than necessary is asking for trouble.
+  //
+  // ST's own remap macros are hostile here: AFIO_REMAP_PARTIAL() does
   //     tmpreg = AFIO->MAPR; ... tmpreg |= AFIO_MAPR_SWJ_CFG; AFIO->MAPR = tmpreg;
   // which ORs in ALL THREE SWJ_CFG bits (0b111 = JTAG *and* SWD disabled).
-  // SWJ_CFG is additionally write-only on STM32F1, so a read-modify-write
-  // cannot preserve it reliably in the first place. Calling the macro after
-  // setting NOJTAG therefore attacks the exact bit PB4 depends on -- and the
-  // only reason it has not bitten is that 0b111 is reserved and ignored.
-  //
-  // So write the whole register once, with both fields we want and nothing
-  // else. No other peripheral on this board needs a remap.
+  // SWJ_CFG is write-only on STM32F1 anyway, so read-modify-write cannot
+  // preserve it. Write the whole register once; nothing else needs a remap.
   AFIO->MAPR = (0x2u << AFIO_MAPR_SWJ_CFG_Pos)      // JTAG off, SW-DP alive
              | (0x2u << AFIO_MAPR_TIM3_REMAP_Pos);  // partial: CH1=PB4, CH2=PB5
+
+  // Now PB4 is ours, the coils can actually be safed. Zero duty with both
+  // direction pins low is coast on an A4950: no current path at all.
+  const int pins[6] = { COIL_A_PWM, COIL_A_DIR_1, COIL_A_DIR_2,
+                        COIL_B_PWM, COIL_B_DIR_1, COIL_B_DIR_2 };
+  for (int i = 0; i < 6; i++) { pinMode(pins[i], OUTPUT); digitalWrite(pins[i], LOW); }
+}
+
+int A4950Driver::init() {
+  a4950_claim_pins();                 // idempotent; safe if already called
+  __HAL_RCC_TIM3_CLK_ENABLE();
 
   // Direction pins are plain outputs, parked low (coast) until commanded.
   const int dirs[4] = {COIL_A_DIR_1, COIL_A_DIR_2, COIL_B_DIR_1, COIL_B_DIR_2};

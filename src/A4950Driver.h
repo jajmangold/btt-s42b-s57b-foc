@@ -22,6 +22,12 @@
 //   CH2 = PB5 drives the A4950 whose direction pins are PB6/PB7  (coil B)
 // ---------------------------------------------------------------------------
 
+// MUST be the first thing main() does, before ANY pin on this board is
+// touched. PB4 is NJTRST and belongs to the JTAG peripheral until SWJ_CFG
+// says otherwise -- pinMode() on it before this call silently does nothing,
+// so the coils cannot even be safed. See A4950Driver.cpp.
+void a4950_claim_pins();
+
 class A4950Driver : public StepperDriver {
  public:
   A4950Driver() = default;

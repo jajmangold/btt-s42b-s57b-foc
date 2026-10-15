@@ -68,6 +68,7 @@ a different toolchain.
 | PWM carrier | 140.1 kHz |
 | CAN | 500 kbit/s exact, 77.8% sample point, zero errors |
 | Electronic gearing | 43–136 counts following error at 2 rad/s |
+| Full power | validated to 3300 mA (100% duty), sustained, no degradation |
 
 See [docs/measurements.md](docs/measurements.md) for how each was obtained.
 

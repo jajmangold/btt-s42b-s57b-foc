@@ -137,6 +137,40 @@ converging from zero at engage, which in practice happens before a cut begins.
 
 ---
 
+## Full-power validation
+
+Stepped current ramp, coil probe at each level (328 counts = healthy). Duty is
+bounded by VREF <= 3V3, so 3300 mA is 100% duty and cannot be exceeded:
+
+| Current | Duty | Coil A | Coil B |
+|---|---|---|---|
+| 1500 mA | 45% | +327 | -329 |
+| 2000 mA | 61% | +330 | -329 |
+| 2500 mA | 76% | +330 | -331 |
+| 3000 mA | 91% | +330 | -332 |
+| **3300 mA** | **100%** | **+329** | **-331** |
+
+Counts creep slightly *above* 328 at higher current: more torque parks the
+rotor harder onto the electrical detent.
+
+**Sustained**: six gearing runs at 3300 mA, around 3 s of continuous drive
+each, with a coil probe between every run — roughly 38 s of energised time at
+full duty. Following error stayed at 90–120 counts, coil probes stayed at
+321–331, and encoder faults stayed at zero. **No thermal shutdown and no
+measurable degradation.**
+
+Two observations worth keeping:
+
+- **More current does not improve tracking on a free shaft.** 90–120 counts at
+  3300 mA versus 102–112 at 800 mA. Torque is not the limiting factor when
+  there is no load; the control law is. Expect this to change under load.
+- The A4950 has **no fault output to the MCU**, so thermal shutdown cannot be
+  detected in firmware. It would present as coils going weak and later
+  recovering. Nothing of the sort was observed here, but if you run full power
+  for long periods, monitor temperature physically.
+
+---
+
 ## CAN
 
 Loopback self-test passes: an 8-byte probe frame returns byte-identical.

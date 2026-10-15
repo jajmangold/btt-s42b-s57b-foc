@@ -69,5 +69,5 @@ Relative to the stock firmware and to common practice on these boards:
 - CAN is proven in loopback only; the physical bus is untested
 - All results were taken with no load on the motor
 
-[Unreleased]: https://github.com/OWNER/btt-s42b-s57b-foc/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/OWNER/btt-s42b-s57b-foc/releases/tag/v0.1.0
+[Unreleased]: https://github.com/jajmangold/btt-s42b-s57b-foc/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/jajmangold/btt-s42b-s57b-foc/releases/tag/v0.1.0

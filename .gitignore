@@ -6,3 +6,4 @@
 # credentials: never commit these
 secrets.h
 **/secrets.h
+cal_sweep.txt

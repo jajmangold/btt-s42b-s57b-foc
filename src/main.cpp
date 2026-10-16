@@ -73,6 +73,7 @@ struct Telem {
   uint32_t sysclk_hz;       // measured, not assumed
   uint32_t clock_ok;        // 1 = crystal came up and core is at 72 MHz
   float    nudge_rev;       // host-written: revolutions for command 16
+  uint32_t cal_done;        // non-zero once the open-loop sweep has filled
 };
 volatile Telem g_telem __attribute__((used));
 
@@ -272,6 +273,15 @@ static int32_t parkAndRead(float ua, float ub, uint32_t settle_ms) {
   updatePos();
   return pos_counts;
 }
+
+// Open-loop sweep buffer (diagnostic, command 19). 200 full steps is one
+// mechanical revolution on a 1.8 deg/step motor.
+static const uint16_t CAL_STEPS     = 200;
+static const uint32_t CAL_SETTLE_MS = 60;
+// volatile, and deliberately so: nothing in the firmware ever reads this back,
+// so without it the compiler correctly proves the stores are dead and removes
+// the array entirely. It is read over SWD, which the compiler cannot see.
+static volatile uint16_t cal_raw[CAL_STEPS];
 
 static void probeCoils(float amps) {
   g_telem.drive_mA = (uint16_t)(amps * 1000);
@@ -718,6 +728,28 @@ void loop() {
           markEnergised(); foc_running = true; motor.enable();
         }
         break;
+      case 19: {
+        // DIAGNOSTIC: open-loop electrical sweep. Steps the field through
+        // CAL_STEPS positions spanning one full MECHANICAL revolution, with no
+        // feedback at all, and records what the encoder reads at each.
+        //
+        // This is the measurement that separates the two remaining stories. If
+        // the encoder is sound, its reading against commanded position is a
+        // straight line. If the magnet or its mounting is off, the line bends,
+        // and with 50 pole pairs even a degree of bend is 50 degrees of
+        // electrical error -- enough to stall commutation at some positions
+        // while leaving open-loop parking, which never consults the encoder,
+        // looking perfect.
+        float a = amps;
+        for (uint16_t k = 0; k < CAL_STEPS; k++) {
+          float elec = (float)k * _2PI * (float)MOTOR_POLE_PAIRS / (float)CAL_STEPS;
+          parkAndRead(a * _cos(elec), a * _sin(elec), CAL_SETTLE_MS);
+          cal_raw[k] = enc.readRaw();
+        }
+        allOff();
+        g_telem.cal_done = CAL_STEPS;
+        break;
+      }
       case 17:   // DIAGNOSTIC: force sensor_direction, then align.
       case 18: {
         // Presetting sensor_direction before initFOC() makes SimpleFOC skip

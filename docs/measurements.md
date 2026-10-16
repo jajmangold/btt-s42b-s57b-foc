@@ -292,3 +292,40 @@ Stated plainly so nobody mistakes derivation for measurement:
 - **P1 isolation is inferred** from the input pull-up configuration and the
   presence of a `COM` pin, not confirmed electrically.
 - **The physical CAN bus is untested**; only loopback has run.
+
+## Encoder linearity, ballscrew axis (2026-10-16)
+
+The ballscrew axis would not run closed loop. It moved 1–2 mm and locked solid,
+in every control mode, at any current. Open-loop drive was flawless throughout.
+
+Ruled out by measurement, in order: mechanical obstruction (free by hand),
+torque (1800 mA moved *less* than 1200 mA), the position controller (velocity
+mode stalls identically), motor and drivers (coil probe gives four park
+positions at 1.77/1.85/1.69° spacing, confirming 1.8°/step and 50 pole pairs),
+`sensor_direction` (forced `+1` and `−1` both stall), magnet strength (replaced,
+no change), and coil wiring order (parks are monotonic once the electrical wrap
+is accounted for).
+
+The cause was encoder nonlinearity. Command 19 steps the field open-loop through
+200 positions spanning one mechanical revolution and records the encoder at each,
+with no feedback anywhere in the path. Against a least-squares line:
+
+| | counts | mech deg | **elec deg** |
+|---|---|---|---|
+| peak deviation | 207 | 2.279 | **114** |
+| rms deviation | 101 | 1.111 | **55** |
+
+With 50 pole pairs every mechanical degree of encoder error becomes fifty
+electrical degrees. FOC needs roughly ±20–30°; at 90° torque reaches zero and
+beyond that it reverses. At 114° peak the drive actively brakes the rotor at
+some shaft positions, which is exactly the observed "moves, then locks".
+
+This also explains why raising current made it worse — more current pushing a
+field that is pointing the wrong way — and why open-loop never showed a problem.
+
+The TLE5012B is specified around ±0.5–1°, so 2.28° peak is 3–4× out of spec and
+points at magnet mounting (centring, tilt, air gap) rather than the magnet.
+
+It is also why the factory firmware keeps a per-motor calibration table and
+prints `Please calibrate`: this part needs correcting against the motor it is
+mounted on. The command-19 sweep produces exactly that data.

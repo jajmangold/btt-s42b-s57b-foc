@@ -229,6 +229,11 @@ The ESP32's TWAI controller speaks plain CAN 2.0, so no external CAN
 controller is needed — only a 3.3 V transceiver such as an SN65HVD230. The
 drive already has one onboard behind J2.
 
+It also joins Wi-Fi and serves a live status page — axis angle, velocity,
+ready/live/fault flags and CAN error counters — plus `/status` as JSON for
+scripting. Copy `src/secrets.example.h` to `src/secrets.h` and fill in your
+network; `secrets.h` is gitignored and must stay that way.
+
 Send `t` on its console to self-test with **no transceiver and no peer**: it
 routes TX to RX through the GPIO matrix and uses self-reception, which proves
 bit timing, filters and protocol encoding before any wiring exists.

@@ -23,6 +23,23 @@
 // ---------------------------------------------------------------------------
 #include <Arduino.h>
 #include "driver/twai.h"
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
+#include "secrets.h"
+
+// Hostname on the LAN. With mDNS this resolves as <HOSTNAME>.local, which
+// saves hunting for a DHCP address every time the board reboots.
+#ifndef HOSTNAME
+#define HOSTNAME "gearcutter"
+#endif
+
+static WebServer http(80);
+
+// Last telemetry seen from each axis, so the web view can answer immediately
+// rather than waiting for the next 50 Hz broadcast.
+struct AxisState { float angle; float vel; uint8_t flags; uint32_t age_ms; bool seen; };
+static AxisState axes[8] = {};
 
 // The drive's UART console is relayed too, on separate pins, so one board can
 // do both during bring-up: CAN for control and telemetry, UART for the
@@ -121,6 +138,90 @@ static void selfTest() {
   Serial.println("  back in NORMAL mode");
 }
 
+// --- web interface --------------------------------------------------------
+static String statusJson() {
+  String j = R"({"uptime_ms":)" + String(millis());
+  twai_status_info_t st; twai_get_status_info(&st);
+  j += R"(,"can":{"state":)" + String((int)st.state);
+  j += R"(,"tx_err":)" + String(st.tx_error_counter);
+  j += R"(,"rx_err":)" + String(st.rx_error_counter);
+  j += R"(,"bus_err":)" + String(st.bus_error_count) + "}";
+  j += R"(,"axes":[)";
+  bool first = true;
+  for (int i = 0; i < 8; i++) {
+    if (!axes[i].seen) continue;
+    if (!first) j += ",";
+    first = false;
+    j += R"({"id":)" + String(i);
+    j += R"(,"angle":)" + String(axes[i].angle, 5);
+    j += R"(,"vel":)" + String(axes[i].vel, 3);
+    j += R"(,"ready":)"  + String((axes[i].flags & FLAG_FOC_READY) ? "true" : "false");
+    j += R"(,"live":)"   + String((axes[i].flags & FLAG_ENERGISED) ? "true" : "false");
+    j += R"(,"fault":)"  + String((axes[i].flags & FLAG_LINK_FAIL) ? "true" : "false");
+    j += R"(,"age_ms":)" + String(millis() - axes[i].age_ms) + "}";
+  }
+  j += "]}";
+  return j;
+}
+
+static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
+<title>drive status</title>
+<style>
+ body{font:14px system-ui;margin:2rem;max-width:40rem}
+ td{padding:.25rem .75rem .25rem 0;font-variant-numeric:tabular-nums}
+ .f{color:#b00} .o{color:#888}
+</style>
+<h2>drive status</h2>
+<div id=b>connecting...</div>
+<script>
+async function tick(){
+ try{
+  const r = await fetch('/status'); const d = await r.json();
+  let h = '<table>';
+  if(!d.axes.length) h += '<tr><td class=o>no telemetry yet - is CAN wired?</td></tr>';
+  for(const a of d.axes){
+   h += '<tr><td>axis '+a.id+'</td><td>'+a.angle.toFixed(4)+' rad</td>'
+      + '<td>'+a.vel.toFixed(2)+' rad/s</td>'
+      + '<td>'+(a.ready?'ready ':'')+(a.live?'live ':'')
+      + (a.fault?'<span class=f>ENCODER FAULT</span>':'')+'</td>'
+      + '<td class=o>'+a.age_ms+' ms ago</td></tr>';
+  }
+  h += '</table><p class=o>CAN bus errors: '+d.can.bus_err+'</p>';
+  document.getElementById('b').innerHTML = h;
+ }catch(e){ document.getElementById('b').textContent = 'lost connection'; }
+}
+tick(); setInterval(tick, 500);
+</script>)HTML";
+
+static void startWifi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname(HOSTNAME);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.print("wifi: connecting to ");
+  Serial.println(WIFI_SSID);
+  uint32_t t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) { delay(250); Serial.print("."); }
+  Serial.println();
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("wifi: FAILED -- continuing without it; CAN and UART are unaffected");
+    return;
+  }
+  Serial.print("wifi: ");
+  Serial.print(WiFi.localIP());
+  Serial.print("  rssi ");
+  Serial.println(WiFi.RSSI());
+  if (MDNS.begin(HOSTNAME)) {
+    MDNS.addService("http", "tcp", 80);
+    Serial.print("mdns: http://");
+    Serial.print(HOSTNAME);
+    Serial.println(".local");
+  }
+  http.on("/", []() { http.send_P(200, "text/html", INDEX_HTML); });
+  http.on("/status", []() { http.send(200, "application/json", statusJson()); });
+  http.begin();
+  Serial.println("http: serving on port 80");
+}
+
 static void help() {
   Serial.println("t self-test | p ping | e/d enable,disable");
   Serial.println("j<v> jog rad/s | g<k> gear | x<pos> gear master | s step/dir");
@@ -137,10 +238,13 @@ void setup() {
   Serial.printf("UART console relay -- TX GPIO%d, RX GPIO%d, %d 8N1\n",
                 UART_TX_PIN, UART_RX_PIN, DRIVE_BAUD);
   if (!canStart(TWAI_MODE_NORMAL)) Serial.println("TWAI install FAILED");
+  startWifi();
   help();
 }
 
 void loop() {
+  http.handleClient();
+
   twai_message_t rx;
   while (twai_receive(&rx, 0) == ESP_OK) {
     if (CAN_TYPE_OF(rx.identifier) == MSG_STATE) onState(rx);

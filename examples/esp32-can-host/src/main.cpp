@@ -139,6 +139,20 @@ static void selfTest() {
 }
 
 // --- web interface --------------------------------------------------------
+//
+// Deliberately plain HTTP on the LAN, read-only, with no TLS and no VPN in
+// this firmware. That is a design decision, not an omission.
+//
+// This node is the one holding the motion plan and gating the jog deadman, so
+// every library linked into it is a thing that can wedge it mid-cut. TLS alone
+// is a poor trade here: an mbedtls handshake on a classic ESP32 costs a second
+// or so and tens of kilobytes per connection, against a budget that already
+// carries the Wi-Fi stack, lwIP and TWAI. A VPN stack is a worse one.
+//
+// Remote access belongs one hop upstream. Put HTTPS, certificates and any
+// tunnel on a general-purpose machine on the same LAN and let it reverse-proxy
+// to this page. Certificates renew there, where there is a filesystem and a
+// clock; the drive controller keeps doing the one job it must not drop.
 static String statusJson() {
   String j = R"({"uptime_ms":)" + String(millis());
   twai_status_info_t st; twai_get_status_info(&st);

@@ -1,4 +1,57 @@
 #include "AxisCan.h"
+#include "config.h"
+
+// ---------------------------------------------------------------------------
+//  Node address from the DIP switches
+// ---------------------------------------------------------------------------
+// The address lives in hardware rather than in the build. Two drives on one
+// bus must have different addresses, and a compile-time constant means the
+// only thing distinguishing two boards is which binary you remembered to put
+// on which -- which is how you end up with two node 1s answering at once and
+// a telemetry stream that makes no sense.
+//
+// Switches are input-with-pull-up, so ON reads 0; the address inverts that so
+// ON = 1. Every switch OFF therefore gives node 1, matching the address this
+// firmware used when it was hardcoded.
+//
+// Defining CAN_NODE_ID_FIXED overrides the switches entirely, for a board
+// whose DIPs are inaccessible or already used for something else.
+
+static uint8_t node_id_ = CAN_NODE_ID_MIN;   // safe default before init
+
+void canNodeIdInit() {
+#ifdef CAN_NODE_ID_FIXED
+  node_id_ = CAN_NODE_ID_FIXED;
+  if (node_id_ < CAN_NODE_ID_MIN) node_id_ = CAN_NODE_ID_MIN;
+  if (node_id_ > CAN_NODE_ID_MAX) node_id_ = CAN_NODE_ID_MAX;
+#else
+  // Caller must already have run a4950_claim_pins(): DIP 3 (PB3/JTDO) and
+  // DIP 4 (PA15/JTDI) are JTAG pins until SWJ_CFG is set to NOJTAG, and read
+  // as such no matter what pinMode() is asked for.
+  pinMode(DIP1_PIN, INPUT_PULLUP);
+  pinMode(DIP2_PIN, INPUT_PULLUP);
+  pinMode(DIP3_PIN, INPUT_PULLUP);
+  pinMode(DIP4_PIN, INPUT_PULLUP);
+  delayMicroseconds(50);            // let the pull-ups settle before sampling
+
+  node_id_ = (uint8_t)(canNodeDipBits() + 1);   // 0..15 -> 1..16
+#endif
+}
+
+uint8_t canNodeId() { return node_id_; }
+
+uint8_t canNodeDipBits() {
+#ifdef CAN_NODE_ID_FIXED
+  return 0;
+#else
+  // ON shorts the pin to ground and reads 0, so invert: ON = 1.
+  return (uint8_t)((!digitalRead(DIP1_PIN) ? 1 : 0)
+                 | (!digitalRead(DIP2_PIN) ? 2 : 0)
+                 | (!digitalRead(DIP3_PIN) ? 4 : 0)
+                 | (!digitalRead(DIP4_PIN) ? 8 : 0));
+#endif
+}
+
 
 #if !defined(STM32F1xx)
 #error "AxisCan programs STM32F1 bxCAN registers directly"

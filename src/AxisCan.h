@@ -20,10 +20,39 @@
 //   prescaler 2 = 1 Mbit, 4 = 500 kbit, 8 = 250 kbit, 16 = 125 kbit.
 // ---------------------------------------------------------------------------
 
-#define CAN_NODE_ID        1
 #define CAN_ID_OF(a, t)    (uint16_t)((((a) & 0x7F) << 4) | ((t) & 0x0F))
 #define CAN_ADDR_OF(id)    (uint8_t)(((id) >> 4) & 0x7F)
 #define CAN_TYPE_OF(id)    (uint8_t)((id) & 0x0F)
+
+// --- addressing ------------------------------------------------------------
+// 11-bit standard ID, split 7 bits of address and 4 bits of message type.
+//
+// Address 0 is the GROUP address: every node acts on a frame sent to it, and
+// no node ever transmits from it. One TARGET frame to address 0 therefore
+// commands a ganged pair in the same instant, rather than one frame each with
+// the second drive a frame-time behind -- about 230 us at 500 kbit/s, which is
+// harmless but needless. It is also the clean way to reach every follower with
+// a single GEAR_X master broadcast, and gives "all axes off" as one frame.
+//
+// Group frames win arbitration, as it happens: address 0 puts them at IDs
+// 0x000-0x00F, numerically below every node's telemetry, and on CAN the lower
+// ID wins. A stop command cannot be delayed by chatter from the drives.
+#define CAN_ADDR_BROADCAST 0
+#define CAN_NODE_ID_MIN    1
+#define CAN_NODE_ID_MAX    16
+
+// Read the DIP switches and latch this node's address. MUST be called after
+// a4950_claim_pins(), which performs the SWJ NOJTAG remap that frees PB3 and
+// PA15; before that, two of the four switches read as JTAG pins, not inputs.
+void    canNodeIdInit();
+
+// This node's address, 1..16. Returns the compile-time default until
+// canNodeIdInit() has run, so a caller that gets the order wrong gets the old
+// single-drive behaviour rather than a wrong address.
+uint8_t canNodeId();
+
+// Raw switch pattern behind the address, for the banner and telemetry.
+uint8_t canNodeDipBits();
 
 // host -> node
 enum : uint8_t {

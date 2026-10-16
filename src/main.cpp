@@ -252,12 +252,16 @@ static void canSendState() {
        | (energised        ? CAN_FLAG_ENERGISED : 0)
        | (g_telem.linkfail ? CAN_FLAG_LINK_FAIL : 0);
   d[7] = (uint8_t)g_telem.seq;
-  can.send(CAN_ID_OF(CAN_NODE_ID, CAN_MSG_STATE), d, 8);
+  can.send(CAN_ID_OF(canNodeId(), CAN_MSG_STATE), d, 8);
 }
 
 // Act on a host frame. Addressing is in software so more axes drop in later.
 static void canHandle(const CanFrame& f) {
-  if (CAN_ADDR_OF(f.id) != CAN_NODE_ID) return;
+  // Act on frames addressed to us, and on group frames. Replies and telemetry
+  // always go out under our OWN address below -- a node must never transmit
+  // from the group address, or two drives would answer as one.
+  const uint8_t addr = CAN_ADDR_OF(f.id);
+  if (addr != canNodeId() && addr != CAN_ADDR_BROADCAST) return;
   switch (CAN_TYPE_OF(f.id)) {
     case CAN_CMD_ENABLE:
       if (f.len >= 1 && f.data[0] && g_telem.foc_ready) {
@@ -307,7 +311,7 @@ static void canHandle(const CanFrame& f) {
         allOff();
       break;
     case CAN_CMD_PING:
-      can.send(CAN_ID_OF(CAN_NODE_ID, CAN_MSG_PONG), BOARD_TAG, 4);
+      can.send(CAN_ID_OF(canNodeId(), CAN_MSG_PONG), BOARD_TAG, 4);
       break;
     default: break;
   }
@@ -380,6 +384,10 @@ void setup() {
   // coils must not be floating for that window.
   a4950_claim_pins();
 
+  // Only now can the DIP switches be read: two of the four are JTAG pins until
+  // the remap above frees them. This sets the CAN node address.
+  canNodeIdInit();
+
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH);
 
@@ -388,6 +396,9 @@ void setup() {
   Serial.println();
   Serial.print(F("=== ")); Serial.print(F(BOARD_NAME));
   Serial.println(F(" : SimpleFOC firmware, idle ==="));
+  Serial.print(F("CAN node ")); Serial.print(canNodeId());
+  Serial.print(F("  (DIP ")); Serial.print(canNodeDipBits(), BIN);
+  Serial.println(F(", group address 0 also accepted)"));
 
   command.add('M', onMotor, "motor");
   command.add('D', onDrive, "drive mode");
@@ -527,7 +538,7 @@ void loop() {
         g_telem.can_selftest = 0;
         if (g_telem.can_ok) {
           const uint8_t probe[8] = {0xDE,0xAD,0xBE,0xEF,0x01,0x02,0x03,0x04};
-          uint16_t id = CAN_ID_OF(CAN_NODE_ID, CAN_MSG_STATE);
+          uint16_t id = CAN_ID_OF(canNodeId(), CAN_MSG_STATE);
           can.send(id, probe, 8);
           uint32_t t0 = millis();
           CanFrame f;

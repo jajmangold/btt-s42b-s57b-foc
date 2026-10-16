@@ -20,6 +20,13 @@
   #error "Define BOARD_S42B_V2 or BOARD_S57B_V2 (see platformio.ini env sections)"
 #endif
 
+// The STM32 core's variant header also defines BOARD_NAME, so drop its value
+// before taking the name over. Without this every translation unit that
+// includes both emits a redefinition warning.
+#ifdef BOARD_NAME
+  #undef BOARD_NAME
+#endif
+
 #if defined(BOARD_S57B_V2)
   #define BOARD_NAME            "BIGTREETECH S57B V2.0"
   #define BOARD_TAG             "S57B"
@@ -114,6 +121,30 @@
 // SWD: PA13 = SWDIO, PA14 = SWCLK, on header P7. THE ONLY WAY IN. Do not remap.
 // PB4/PB3/PA15 are JTAG pins out of reset -- the firmware frees them with
 // SWJ NOJTAG, which keeps SW-DP alive. COIL_A_PWM is PB4, so this is required.
+
+// ---------------------------------------------------------------------------
+//  DIP switches -- CAN node address
+// ---------------------------------------------------------------------------
+// Four switches. The factory firmware used them for microstep and open/closed
+// loop; neither means anything under FOC, so this firmware repurposes them as
+// the CAN node address. That keeps the address in the hardware, where it
+// belongs: two drives on one bus must differ, and having to remember which
+// binary went on which board is exactly how you end up with two node 1s.
+//
+// All four are input-with-pull-up, so a switch that is ON reads 0. The address
+// inverts that, so ON = 1 and a board with every switch OFF is node 1 -- the
+// same address the firmware used when it was hardcoded, so existing
+// single-drive setups are unaffected by this change.
+//
+// ORDERING TRAP: DIP 3 is PB3 (JTDO) and DIP 4 is PA15 (JTDI). Both belong to
+// the JTAG peripheral out of reset and read nothing useful until SWJ_CFG is
+// set to NOJTAG. a4950_claim_pins() does that remap, so the switches MUST NOT
+// be read before it has run. This is the same trap that made an earlier
+// pinMode(PB4) silently do nothing.
+#define DIP1_PIN  PB10
+#define DIP2_PIN  PB11
+#define DIP3_PIN  PB3
+#define DIP4_PIN  PA15
 
 #define LED_PIN     PC13
 #define BTN_DOWN    PA3

@@ -207,6 +207,28 @@ Two observations worth keeping:
 
 ---
 
+## UART control
+
+Verified end to end through an ESP32 serial bridge on header P7 at 38400 8N1.
+
+| Command | Response |
+|---|---|
+| `DC 1200` | `current 1200 mA` |
+| **`DC 9999`** | **`current 3300 mA`** — clamped to the board maximum |
+| `D5` | `align ok` |
+| `D1` / `D2` | `hold` / `step/dir` |
+| `D4 2.0` | `jog 2.000` |
+| `D3 1.0` | `gear k=1.0000` |
+| `D?` | `ready=1 shaft=11.474 rad mA=800 faults=0 steps=0` |
+
+SimpleFOC's `Commander` verbs work alongside, so existing tooling is unchanged:
+`MVP` returns `PID vel| P: 0.050`, matching the configured gain.
+
+The `DC 9999` result is the one worth noting: a current value arriving over a
+wire cannot exceed the board rating, and that is enforced rather than assumed.
+
+---
+
 ## STEP / DIR
 
 Pulses are counted by TIM2 in external clock mode 2, verified from the

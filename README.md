@@ -70,6 +70,7 @@ a different toolchain.
 | Electronic gearing | 90–136 counts following error at 2 rad/s |
 | Full power | validated to 3300 mA (100% duty), sustained, no degradation |
 | STEP/DIR | one commanded revolution within 12 counts of 360° |
+| UART | full command set verified, current clamped to board maximum |
 
 See [docs/measurements.md](docs/measurements.md) for how each was obtained.
 
@@ -138,6 +139,28 @@ CAN is where this firmware earns its keep: over STEP/DIR a drive is a black box
 with one alarm wire, whereas CAN reports actual position, following error, and
 the specific reason for a fault. Protocol in [docs/protocol.md](docs/protocol.md).
 
+### UART
+
+38400 8N1 on header P7. SimpleFOC's `Commander` provides the standard motor
+verbs under `M`, so existing SimpleFOC tooling and anyone's muscle memory work
+unchanged. `D` adds this firmware's drive modes:
+
+```
+D?          help, plus live status
+D5          align (find the electrical zero)
+D1          hold position
+D2          follow STEP/DIR from P1
+D3 <k>      engage electronic gearing at ratio k
+D4 <v>      jog at v rad/s
+DC <mA>     set current limit, clamped to the board maximum
+M...        full SimpleFOC motor verbs: PID gains, limits, target, monitoring
+```
+
+Current values arriving over the wire are clamped to the board maximum, and
+`Commander` cannot be used to exceed it in any case — duty is
+`|U| / voltage_power_supply`, and `voltage_power_supply` *is* the full-duty
+current, so the hardware bound holds whatever anyone types.
+
 ### STEP / DIR
 
 Step pulses are counted by **TIM2 in hardware** (PA0 is the timer's external
@@ -176,10 +199,18 @@ time-based profile — so a late update makes it trail and catch up while the
 
 ## Tools
 
-`tools/telem.py` reads live state out of the running firmware over SWD without
-halting it, so you can watch position and following error with no serial cable
-attached. `tools/swd.py` is a bit-banged SWD master for MicroPython, kept as a
-fallback for anyone without a probe.
+**`tools/telem.py`** reads live state out of the running firmware over SWD
+without halting it, so you can watch position, following error and fault
+counters with no serial cable attached.
+
+**`tools/esp32-bridge/`** turns any ESP32 dev board into a USB-to-serial
+adapter for the drive's P7 console — useful when you have one to hand and no
+dedicated USB-TTL cable. Three jumpers, and the drive's command set is then
+available from any terminal. The same board has a TWAI controller, so this is
+also a reasonable starting point for a CAN host.
+
+**`tools/swd.py`** is a bit-banged SWD master for MicroPython, kept as a
+fallback for anyone without a debug probe.
 
 ## Upstream
 

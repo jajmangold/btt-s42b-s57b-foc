@@ -718,6 +718,24 @@ void loop() {
           markEnergised(); foc_running = true; motor.enable();
         }
         break;
+      case 17:   // DIAGNOSTIC: force sensor_direction, then align.
+      case 18: {
+        // Presetting sensor_direction before initFOC() makes SimpleFOC skip
+        // its own direction detection and keep the value given, while still
+        // searching for the electrical zero. Used to test whether automatic
+        // detection picked the wrong sign -- an inverted feedback sign makes
+        // FOC push the rotor the wrong way, so the error grows and the axis
+        // locks solid after a short move, which is exactly the symptom here.
+        motor.sensor_direction = (c == 17) ? Direction::CW : Direction::CCW;
+        motor.voltage_limit = amps;
+        markEnergised();
+        motor.initFOC();
+        g_telem.zero_elec  = motor.zero_electric_angle;
+        g_telem.sensor_dir = (int32_t)motor.sensor_direction;
+        g_telem.foc_ready  = (motor.motor_status == FOCMotorStatus::motor_ready) ? 1 : 0;
+        allOff();
+        break;
+      }
       case 16: {
         // Bounded relative move, both directions, for positioning by hand over
         // SWD -- creeping a gantry up to a sensor, for instance. The distance

@@ -209,6 +209,13 @@
 #define HOME_BACKOFF_EXTRA_RAD  1.3f     // past the release point (~1 mm at 5 mm lead)
 #define HOME_BACKOFF_MAX_RAD    12.0f    // ~9.5 mm at 5 mm lead, then abort
 
+// Bounded manual nudge (SWD command 16). Deliberately small, slow and weak:
+// this exists for positioning a gantry by hand near something it could hit,
+// which is the opposite of a situation wanting speed or torque.
+#define NUDGE_MAX_REV           2.0f     // hard clamp, +/- 10 mm at 5 mm lead
+#define NUDGE_VEL_RAD_S         1.5f     // ~1.2 mm/s, vs SimpleFOC's default 20
+#define NUDGE_mA                500
+
 // Screw lead, for turning radians into millimetres in operator messages only.
 // Nothing in the control path depends on it.
 #ifndef AXIS_LEAD_MM

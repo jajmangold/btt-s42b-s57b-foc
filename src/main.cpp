@@ -72,6 +72,7 @@ struct Telem {
   float    home_angle;      // shaft angle, rad, at the moment of trigger
   uint32_t sysclk_hz;       // measured, not assumed
   uint32_t clock_ok;        // 1 = crystal came up and core is at 72 MHz
+  float    nudge_rev;       // host-written: revolutions for command 16
 };
 volatile Telem g_telem __attribute__((used));
 
@@ -688,6 +689,26 @@ void loop() {
           markEnergised(); foc_running = true; motor.enable();
         }
         break;
+      case 16: {
+        // Bounded relative move, both directions, for positioning by hand over
+        // SWD -- creeping a gantry up to a sensor, for instance. The distance
+        // comes from g_telem.nudge_rev, written by the host before the command,
+        // and is CLAMPED here: a host that writes a wild value, or forgets to
+        // write one at all, must not launch the axis across the machine.
+        if (!g_telem.foc_ready) break;
+        float rev = g_telem.nudge_rev;
+        if (!(rev == rev)) rev = 0.0f;                       // NaN guard
+        if (rev >  NUDGE_MAX_REV) rev =  NUDGE_MAX_REV;
+        if (rev < -NUDGE_MAX_REV) rev = -NUDGE_MAX_REV;
+        if (rev == 0.0f) break;
+        motor.controller    = MotionControlType::angle;
+        jog_mode = gear_mode = step_mode = false;
+        motor.voltage_limit = AMPS(NUDGE_mA);
+        motor.velocity_limit = NUDGE_VEL_RAD_S;              // gentle, not the default 20
+        g_telem.target = enc.getAngle() + rev * _2PI;
+        markEnergised(); foc_running = true; motor.enable();
+        break;
+      }
       case 7:                                   // closed-loop +1 shaft revolution
         if (g_telem.foc_ready) {
           motor.controller = MotionControlType::angle; jog_mode = false;

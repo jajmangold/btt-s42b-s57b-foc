@@ -106,9 +106,11 @@ pin alongside GND, that strongly suggests the inputs are isolated and therefore
 
 ### DIP switches
 
-Four switches, read by the factory firmware in `SetModeCheck()`. **This
-firmware ignores them** — microstep is meaningless under FOC, and open/closed
-loop is not a choice here — but two of the pins matter for a different reason.
+Four switches, read by the factory firmware in `SetModeCheck()`. Their factory
+meanings are gone here — microstep is meaningless under FOC and open/closed
+loop is not a choice — so **this firmware uses them as the CAN node address**,
+`switches + 1`, giving 1..16. See `docs/protocol.md`. Two of the pins also
+matter for a second reason, below.
 
 | Pin | DIP | Factory meaning |
 |---|---|---|

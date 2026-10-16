@@ -198,7 +198,23 @@
 #define HOME_SEEK_VEL_RAD_S     1.0f
 #define HOME_SEEK_mA            400
 #define HOME_MAX_TRAVEL_RAD     125.0f   // ~20 turns, then abort
-#define HOME_BACKOFF_RAD        0.25f    // clear of the trigger, towards travel
+
+// Backing off is done BY SENSOR STATE, not by a guessed distance. A hall
+// sensor's detection window is as wide as its magnet makes it -- easily
+// several millimetres -- so a fixed backoff small enough to feel safe is also
+// small enough to leave the axis still sitting on the trigger, where the next
+// home refuses to start. Instead: reverse until the sensor actually releases,
+// then add a margin. If it never releases within HOME_BACKOFF_MAX_RAD, the
+// sensor is stuck on and that is a fault, not something to drive through.
+#define HOME_BACKOFF_EXTRA_RAD  1.3f     // past the release point (~1 mm at 5 mm lead)
+#define HOME_BACKOFF_MAX_RAD    12.0f    // ~9.5 mm at 5 mm lead, then abort
+
+// Screw lead, for turning radians into millimetres in operator messages only.
+// Nothing in the control path depends on it.
+#ifndef AXIS_LEAD_MM
+#define AXIS_LEAD_MM            5.0f     // 1605 ballscrew
+#endif
+#define RAD_TO_MM(r)            ((r) * AXIS_LEAD_MM / 6.28318530718f)
 
 #define LED_PIN     PC13
 #define BTN_DOWN    PA3

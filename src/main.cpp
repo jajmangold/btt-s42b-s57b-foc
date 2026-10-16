@@ -357,6 +357,8 @@ static uint8_t home_state  = HOME_IDLE;
 static float   home_start  = 0.0f;    // shaft angle when the seek began
 static float   home_dir    = 1.0f;    // +1 or -1
 static float   home_vel    = 0.0f;    // commanded seek velocity, rad/s
+static bool    home_released = false; // sensor let go during backoff
+static float   home_rel_ang  = 0.0f;  // shaft angle at the release point
 static uint8_t home_count  = 0;       // debounce accumulator
 static bool    home_level  = false;   // debounced sensor state
 
@@ -386,6 +388,7 @@ static bool homeTriggered() { return home_level; }
 // (HOME_DONE, HOME_FAIL) set it after their allOff().
 static void homeCancel() {
   home_vel = 0.0f;
+  home_released = false;
   if (home_state == HOME_SEEK || home_state == HOME_BACKOFF) {
     home_state = HOME_IDLE;
     g_telem.home_state = HOME_IDLE;
@@ -419,10 +422,13 @@ static void homeStart(float dir_vel) {
   markEnergised(); foc_running = true; motor.enable();
   home_vel = home_dir * HOME_SEEK_VEL_RAD_S;
 
+  home_released = false;
   home_state = HOME_SEEK;
   g_telem.home_state = HOME_SEEK;
   Serial.print(F("homing ")); Serial.print(home_dir > 0 ? F("+") : F("-"));
-  Serial.print(F(" at ")); Serial.print(HOME_SEEK_mA); Serial.println(F(" mA"));
+  Serial.print(F(" at ")); Serial.print(HOME_SEEK_mA); Serial.print(F(" mA, "));
+  Serial.print(RAD_TO_MM(HOME_SEEK_VEL_RAD_S), 2); Serial.print(F(" mm/s, abort after "));
+  Serial.print(RAD_TO_MM(HOME_MAX_TRAVEL_RAD), 1); Serial.println(F(" mm"));
 }
 
 static void homeUpdate() {
@@ -446,18 +452,33 @@ static void homeUpdate() {
     // The sensor may be unplugged, or the magnet may have moved. Either way,
     // stop before the mechanics do it for us.
     if (fabsf(travelled) > HOME_MAX_TRAVEL_RAD) {
-      homeAbort(F("no trigger within HOME_MAX_TRAVEL_RAD"));
+      homeAbort(F("no trigger within the travel limit -- sensor wiring?"));
     }
     return;
   }
 
-  // HOME_BACKOFF
-  if (fabsf(travelled) >= HOME_BACKOFF_RAD) {
+  // HOME_BACKOFF -- reverse until the sensor RELEASES, then a margin past it.
+  if (!home_released) {
+    if (!homeTriggered()) {
+      home_released = true;
+      home_rel_ang  = enc.getAngle();
+      Serial.print(F("sensor released after "));
+      Serial.print(fabsf(RAD_TO_MM(travelled)), 2); Serial.println(F(" mm"));
+    } else if (fabsf(travelled) > HOME_BACKOFF_MAX_RAD) {
+      // Still triggered after a sane backoff: the sensor is stuck on, or the
+      // magnet is far larger than assumed. Either way, stop rather than keep
+      // reversing on the strength of a reading we no longer trust.
+      homeAbort(F("sensor never released during backoff"));
+    }
+    return;
+  }
+  if (fabsf(enc.getAngle() - home_rel_ang) >= HOME_BACKOFF_EXTRA_RAD) {
     home_vel = 0.0f;
     allOff();
     home_state = HOME_DONE;
     g_telem.home_state = HOME_DONE;
-    Serial.println(F("home done, off"));
+    Serial.print(F("home done at ")); Serial.print(g_telem.home_angle, 4);
+    Serial.println(F(" rad, axis off and clear of the sensor"));
   }
 }
 

@@ -329,3 +329,32 @@ points at magnet mounting (centring, tilt, air gap) rather than the magnet.
 It is also why the factory firmware keeps a per-motor calibration table and
 prints `Please calibrate`: this part needs correcting against the motor it is
 mounted on. The command-19 sweep produces exactly that data.
+
+### Correcting it
+
+`tools/calibrate.py apply` sweeps open loop, fits a line, and uploads a
+256-bucket additive correction indexed by the raw reading and interpolated
+between buckets. Applied inside `getSensorAngle()`, so every consumer sees
+corrected angles.
+
+| | peak | rms |
+|---|---|---|
+| uncorrected | 128.2 elec° | 66.1 elec° |
+| corrected | 53.1 elec° | **4.9 elec°** |
+
+Closed-loop motion went from **0 of 10** moves completing to **9 of 10**,
+accurate to ±0.05 mm on a 4 mm move.
+
+Two things worth knowing. Verification must sweep through `getSensorAngle()`,
+not `readRaw()` — `readRaw()` bypasses the table, so a sweep taken that way is
+blind to the thing it is measuring, and the first verification run here was
+wrong for exactly that reason.
+
+And refinement plateaus around 48–53 elec° peak while rms stays near 5°. That
+residual is **stiction, not encoder error**: the rotor settles where friction
+allows rather than at the true field angle, so a single-direction sweep measures
+friction alongside the thing it is after. Sweeping both directions and averaging
+would cancel it, which is what SimpleFOC's `CalibratedSensor` does.
+
+**The table currently lives in RAM and is lost on reset.** Persisting it to
+flash is the obvious next step.

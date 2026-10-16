@@ -102,6 +102,20 @@ static uint8_t tle_crc(uint16_t cmd, uint16_t data) {
   return (uint8_t)~crc;
 }
 
+volatile int16_t tle_cal_corr[TLE_CAL_BUCKETS];
+volatile uint8_t tle_cal_enable = 0;
+
+// Linear interpolation between adjacent buckets, wrapping at the top because
+// the angle does. Returns a corrected 15-bit count.
+static uint16_t tleApplyCal(uint16_t raw) {
+  uint16_t idx  = raw >> TLE_CAL_SHIFT;                 // 0..255
+  uint16_t frac = raw & ((1u << TLE_CAL_SHIFT) - 1);    // 0..127
+  int32_t  c0   = tle_cal_corr[idx];
+  int32_t  c1   = tle_cal_corr[(idx + 1) & (TLE_CAL_BUCKETS - 1)];
+  int32_t  corr = c0 + ((c1 - c0) * (int32_t)frac >> TLE_CAL_SHIFT);
+  return (uint16_t)(((int32_t)raw + corr) & 0x7FFF);
+}
+
 float TLE5012B::getSensorAngle() {
   // Validated read. Every 15-bit value is a legal angle, so the data word
   // alone can never reveal corruption -- only the safety word can. A bad
@@ -115,7 +129,9 @@ float TLE5012B::getSensorAngle() {
     crc_fails_++;
     return angle_prev;
   }
-  return (float)(d & 0x7FFF) * _2PI / 32768.0f;
+  uint16_t raw = (uint16_t)(d & 0x7FFF);
+  if (tle_cal_enable) raw = tleApplyCal(raw);
+  return (float)raw * _2PI / 32768.0f;
 }
 
 bool TLE5012B::checkLink() {

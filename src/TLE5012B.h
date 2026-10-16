@@ -28,6 +28,30 @@ static const uint16_t TLE_CMD_READ_SPEED  = 0x8031;  // ASPD, 1 word
 // 9 MHz, i.e. slightly over spec. Start inside spec; raise only with evidence.
 static const uint32_t TLE_SPI_HZ = 4000000;
 
+// ---------------------------------------------------------------------------
+//  Encoder linearity correction
+// ---------------------------------------------------------------------------
+// This part is specified around +/-0.5-1 degrees of angle error, and that error
+// is systematic -- a property of this magnet on this shaft, repeatable turn
+// after turn. On a 2-pole motor you would ignore it. On a 50-pole-pair stepper
+// every mechanical degree becomes FIFTY electrical degrees, and FOC starts
+// losing torque past about 30 and reverses past 90.
+//
+// Measured on the ballscrew axis: 2.28 degrees peak, which is 114 electrical.
+// The axis moved a millimetre or two and locked solid, because at some shaft
+// positions the drive was braking the rotor rather than turning it.
+//
+// The table holds an additive correction in encoder counts, indexed by the top
+// bits of the raw reading, and is interpolated between buckets -- a stepped
+// correction would simply trade one smooth error for 256 sharp ones.
+//
+// It is specific to this magnet in this position on this motor. Re-run the
+// sweep after any mechanical change.
+#define TLE_CAL_BUCKETS   256
+#define TLE_CAL_SHIFT     7               // 32768 / 256
+extern volatile int16_t tle_cal_corr[TLE_CAL_BUCKETS];
+extern volatile uint8_t tle_cal_enable;
+
 class TLE5012B : public Sensor {
  public:
   explicit TLE5012B(int csPin = ENC_CS);

@@ -218,6 +218,21 @@ re-proves the deadman watchdog rather than exercising it only on failure.
 **`tools/swd.py`** is a bit-banged SWD master for MicroPython, kept as a
 fallback for anyone without a debug probe.
 
+## Examples
+
+**`examples/esp32-can-host/`** is a complete, readable implementation of the
+CAN protocol for an ESP32 — send commands, decode the 50 Hz telemetry
+broadcast, and drive an axis from a serial console. It relays the drive's UART
+console on separate pins too, so one board covers both paths during bring-up.
+
+The ESP32's TWAI controller speaks plain CAN 2.0, so no external CAN
+controller is needed — only a 3.3 V transceiver such as an SN65HVD230. The
+drive already has one onboard behind J2.
+
+Send `t` on its console to self-test with **no transceiver and no peer**: it
+routes TX to RX through the GPIO matrix and uses self-reception, which proves
+bit timing, filters and protocol encoding before any wiring exists.
+
 ## Upstream
 
 Work from this project that belongs in its dependencies is sent there rather

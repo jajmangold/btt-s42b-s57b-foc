@@ -10,7 +10,15 @@ import io, os, re, struct, subprocess, sys, tempfile
 OCD  = r"C:\Users\Josh\.platformio\packages\tool-openocd"
 ELF  = os.path.join(os.path.dirname(__file__), "..", ".pio", "build", "s57b", "firmware.elf")
 NM   = r"C:\Users\Josh\.platformio\packages\toolchain-gccarmnoneeabi\bin\arm-none-eabi-nm.exe"
-FMT  = "<IIHHHHIfffIIfifHHiiiiHHfifIIIIIIIIIfIffffIiII"  # +step_count step_raw step_on
+# Keep this in step with `struct Telem` in src/main.cpp, IN DECLARATION ORDER.
+# Decode from the declaration, never by counting columns in previous output --
+# three separate misreadings in this project came from doing the latter.
+FMT  = ("<IIHHHHIfffIIfifHHiiiiHHfifIIIIIIIII"   # .. status_fails
+        "fI"                                      # jog_vel jog_stops
+        "ffffI"                                   # gear_k master err err_max on
+        "iII"                                     # step_count step_raw step_on
+        "IIIIf"                                   # home_raw trig state homed angle
+        "II")                                     # sysclk_hz clock_ok
 SIZE = struct.calcsize(FMT)
 MAGIC = 0x53354237
 
@@ -56,14 +64,18 @@ def capture(seconds=10.0, interval_ms=200):
          can_ok, can_btr, can_tx, can_rx, can_err, can_self,
          crc_f, stat_f, jog_v, jog_stop,
          g_k, g_m, g_e, g_emax, g_on,
-         st_cnt, st_raw, st_on) = struct.unpack(FMT, d)
+         st_cnt, st_raw, st_on,
+         home_raw, home_trig, home_state, homed, home_angle,
+         sysclk_hz, clock_ok) = struct.unpack(FMT, d)
         if magic != MAGIC:
             print("  !! magic 0x%08X -- firmware not running?" % magic); continue
         rows.append((seq, raw, rmin, rmax, bad, cmd, cmd_done, moved, expect, duty, mA,
                      (p0, p1, p2, p3), zero_elec, sensor_dir, target, foc_ready,
                      can_ok, can_btr, can_tx, can_rx, can_err, can_self, crc_f, stat_f,
                      jog_v, jog_stop, g_k, g_m, g_e, g_emax, g_on,
-                     st_cnt, st_raw, st_on))
+                     st_cnt, st_raw, st_on,
+                     home_raw, home_trig, home_state, homed, home_angle,
+                     sysclk_hz, clock_ok))
         print("%5d %10d %7d %9.2f %9.3f %9.3f %6d"
               % (i, seq, raw, raw * 360.0 / 32768.0, shaft, vel, bad))
 

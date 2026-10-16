@@ -132,6 +132,26 @@ You can read the switch positions without a firmware change by configuring the
 pins as input-with-pull over SWD and sampling under both pull directions: a pin
 that reads 0 under a pull-up is driven low, i.e. switch ON.
 
+### Home / limit sensor
+
+| Pin | Function |
+|---|---|
+| PB15 | hall-effect sensor input, internal pull-up, active low |
+
+PB15 was chosen for two reasons. It is **5 V tolerant** — unlike `PA0`–`PA7`
+and `PB0`–`PB1`, which are the ADC-capable pins and are not — so the usual 5 V
+hall module cannot over-volt it. And nothing else in this firmware uses it.
+
+Measured on hardware with a 3-wire hall module: **1 with no magnet, 0 with one
+present**, each stable across six consecutive samples. That is the standard
+open-collector-plus-pull-up output, so the idle high comes from the module's
+own pull-up; the internal pull-up is enabled as well so the pin still has a
+defined level if the module is unplugged.
+
+`DS` reports the sensor without moving anything. `DH<±v>` runs a homing seek,
+which **does** move the axis — see `docs/flashing.md` before using it on a
+ballscrew.
+
 ### CAN and debug
 
 | Pin | Function |

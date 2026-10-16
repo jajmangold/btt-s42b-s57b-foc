@@ -65,6 +65,11 @@ struct Telem {
   int32_t  step_count;      // accumulated STEP pulses, signed by DIR
   uint32_t step_raw;        // TIM2 counter, for checking the hardware directly
   uint32_t step_on;         // 1 = following STEP/DIR
+  uint32_t home_raw;        // live sensor pin level, before debounce
+  uint32_t home_trig;       // 1 = debounced sensor says triggered
+  uint32_t home_state;      // 0 idle 1 seeking 2 backing off 3 homed 4 failed
+  uint32_t homed;           // 1 = home_angle is valid
+  float    home_angle;      // shaft angle, rad, at the moment of trigger
   uint32_t sysclk_hz;       // measured, not assumed
   uint32_t clock_ok;        // 1 = crystal came up and core is at 72 MHz
 };
@@ -105,6 +110,12 @@ static uint32_t gear_t_prev = 0;
 
 static void markEnergised();      // defined below
 
+// Defined with the homing block below. allOff() is the single place every
+// stop path converges on, so cancelling a seek has to happen here too --
+// otherwise D0 stops the motor but leaves the state machine armed, and the
+// next enable would quietly resume seeking.
+static void homeCancel();
+
 static void allOff() {
   motor.disable();
   driver.setPwm(0, 0);
@@ -118,6 +129,7 @@ static void allOff() {
   g_telem.step_on = 0;
   g_telem.gear_on = 0;
   g_telem.jog_vel = 0.0f;
+  homeCancel();
   g_telem.drive_mA = 0;
 }
 
@@ -331,6 +343,124 @@ static void canHandle(const CanFrame& f) {
 // ---------------------------------------------------------------------------
 static void onMotor(char* cmd) { command.motor(&motor, cmd); }
 
+// ---------------------------------------------------------------------------
+//  Home sensor and homing
+// ---------------------------------------------------------------------------
+// Homing is a STATE MACHINE driven from the main loop, not a blocking routine.
+// That is not a style preference: loopFOC() has to keep running at full rate
+// for the motor to stay under control, so a seek that blocked inside a command
+// handler would stall the very control loop holding the axis.
+
+enum : uint8_t { HOME_IDLE = 0, HOME_SEEK, HOME_BACKOFF, HOME_DONE, HOME_FAIL };
+
+static uint8_t home_state  = HOME_IDLE;
+static float   home_start  = 0.0f;    // shaft angle when the seek began
+static float   home_dir    = 1.0f;    // +1 or -1
+static float   home_vel    = 0.0f;    // commanded seek velocity, rad/s
+static uint8_t home_count  = 0;       // debounce accumulator
+static bool    home_level  = false;   // debounced sensor state
+
+static void homeSensorInit() {
+  pinMode(HOME_SENSOR_PIN, INPUT_PULLUP);
+}
+
+// Debounce by agreement: a new level is only accepted after it has been read
+// HOME_DEBOUNCE_SAMPLES times running. Called every loop, so this is a few
+// hundred microseconds of filtering, not a delay.
+static void homeSensorPoll() {
+  int raw = digitalRead(HOME_SENSOR_PIN);
+  g_telem.home_raw = (uint32_t)raw;
+#if HOME_SENSOR_ACTIVE_LOW
+  bool now = (raw == LOW);
+#else
+  bool now = (raw == HIGH);
+#endif
+  if (now == home_level) { home_count = 0; }
+  else if (++home_count >= HOME_DEBOUNCE_SAMPLES) { home_level = now; home_count = 0; }
+  g_telem.home_trig = home_level ? 1 : 0;
+}
+
+static bool homeTriggered() { return home_level; }
+
+// Drop out of any in-flight seek. Callers that want a specific terminal state
+// (HOME_DONE, HOME_FAIL) set it after their allOff().
+static void homeCancel() {
+  home_vel = 0.0f;
+  if (home_state == HOME_SEEK || home_state == HOME_BACKOFF) {
+    home_state = HOME_IDLE;
+    g_telem.home_state = HOME_IDLE;
+  }
+}
+
+static void homeAbort(const __FlashStringHelper* why) {
+  home_vel = 0.0f;
+  allOff();
+  home_state = HOME_FAIL;
+  g_telem.home_state = HOME_FAIL;
+  Serial.print(F("home FAILED: ")); Serial.println(why);
+}
+
+static void homeStart(float dir_vel) {
+  if (!g_telem.foc_ready) { Serial.println(F("align first: D5")); return; }
+  if (homeTriggered()) {
+    // Already on the sensor. Seeking further in would only drive deeper into
+    // whatever the sensor marks, so refuse and let the operator back it off.
+    Serial.println(F("home refused: sensor already triggered, move clear first"));
+    return;
+  }
+  home_dir   = (dir_vel < 0) ? -1.0f : 1.0f;
+  home_start = enc.getAngle();
+  g_telem.homed = 0;
+
+  // Deliberately weak: a missed trigger should stall, not break something.
+  motor.voltage_limit = AMPS(HOME_SEEK_mA);
+  motor.controller    = MotionControlType::velocity;
+  jog_mode = gear_mode = step_mode = false;
+  markEnergised(); foc_running = true; motor.enable();
+  home_vel = home_dir * HOME_SEEK_VEL_RAD_S;
+
+  home_state = HOME_SEEK;
+  g_telem.home_state = HOME_SEEK;
+  Serial.print(F("homing ")); Serial.print(home_dir > 0 ? F("+") : F("-"));
+  Serial.print(F(" at ")); Serial.print(HOME_SEEK_mA); Serial.println(F(" mA"));
+}
+
+static void homeUpdate() {
+  if (home_state != HOME_SEEK && home_state != HOME_BACKOFF) return;
+  float travelled = enc.getAngle() - home_start;
+
+  if (home_state == HOME_SEEK) {
+    if (homeTriggered()) {
+      g_telem.home_angle = enc.getAngle();
+      g_telem.homed      = 1;
+      // Back off far enough to release the sensor, so a subsequent home starts
+      // from a known-clear position rather than from on top of the trigger.
+      home_vel     = -home_dir * HOME_SEEK_VEL_RAD_S;
+      home_start   = enc.getAngle();
+      home_state   = HOME_BACKOFF;
+      g_telem.home_state = HOME_BACKOFF;
+      Serial.print(F("home found at ")); Serial.print(g_telem.home_angle, 4);
+      Serial.println(F(" rad"));
+      return;
+    }
+    // The sensor may be unplugged, or the magnet may have moved. Either way,
+    // stop before the mechanics do it for us.
+    if (fabsf(travelled) > HOME_MAX_TRAVEL_RAD) {
+      homeAbort(F("no trigger within HOME_MAX_TRAVEL_RAD"));
+    }
+    return;
+  }
+
+  // HOME_BACKOFF
+  if (fabsf(travelled) >= HOME_BACKOFF_RAD) {
+    home_vel = 0.0f;
+    allOff();
+    home_state = HOME_DONE;
+    g_telem.home_state = HOME_DONE;
+    Serial.println(F("home done, off"));
+  }
+}
+
 static void onDrive(char* cmd) {
   float amps = AMPS(g_telem.set_mA ? g_telem.set_mA : BRINGUP_mA);
   switch (cmd[0]) {
@@ -354,6 +484,17 @@ static void onDrive(char* cmd) {
               allOff();
               Serial.print(F("align ")); Serial.println(g_telem.foc_ready ? F("ok") : F("FAILED"));
               break;
+    case 'S':   // sensor status -- reads only, never moves the motor
+      Serial.print(F("home sensor: pin=")); Serial.print(g_telem.home_raw);
+      Serial.print(F(" -> ")); Serial.print(homeTriggered() ? F("TRIGGERED") : F("clear"));
+      Serial.print(F("  homed=")); Serial.print(g_telem.homed);
+      if (g_telem.homed) { Serial.print(F(" at ")); Serial.print(g_telem.home_angle, 4);
+                           Serial.print(F(" rad")); }
+      Serial.println();
+      break;
+    case 'H':   // MOVES THE MOTOR. sign of the argument picks the direction.
+      homeStart(atof(cmd + 1));
+      break;
     case 'C': { int ma = atoi(cmd + 1);
                 if (ma > CURRENT_CEILING_mA) ma = CURRENT_CEILING_mA;  // never trust input
                 if (ma > 0) g_telem.set_mA = ma;
@@ -363,6 +504,7 @@ static void onDrive(char* cmd) {
     default:
       Serial.println(F("D0 off | D1 hold | D2 step/dir | D3<k> gear | D4<v> jog"));
       Serial.println(F("D5 align | DC<mA> current | D? help"));
+      Serial.println(F("DS sensor status | DH<+/-v> home seek (MOVES THE AXIS)"));
       Serial.print(F("  ready="));   Serial.print(g_telem.foc_ready);
       Serial.print(F(" shaft="));    Serial.print(enc.getAngle(), 3);
       Serial.print(F(" rad  mA="));  Serial.print(g_telem.set_mA ? g_telem.set_mA : BRINGUP_mA);
@@ -387,6 +529,7 @@ void setup() {
   // Only now can the DIP switches be read: two of the four are JTAG pins until
   // the remap above frees them. This sets the CAN node address.
   canNodeIdInit();
+  homeSensorInit();
 
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH);
@@ -611,9 +754,14 @@ void loop() {
     }
   }
 
+  homeSensorPoll();
+  homeUpdate();
+
   if (foc_running) {
     motor.loopFOC();
-    if (gear_mode)      motor.move(gearVelocityCmd());
+    bool homing = (home_state == HOME_SEEK || home_state == HOME_BACKOFF);
+    if (homing)         motor.move(home_vel);
+    else if (gear_mode) motor.move(gearVelocityCmd());
     else if (jog_mode)  motor.move(g_telem.jog_vel);
     else                motor.move(g_telem.target);
   }

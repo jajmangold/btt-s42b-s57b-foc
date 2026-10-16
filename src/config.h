@@ -167,6 +167,39 @@
 #define DIP3_PIN  PB3
 #define DIP4_PIN  PA15
 
+// ---------------------------------------------------------------------------
+//  Home / limit sensor
+// ---------------------------------------------------------------------------
+// A 3-wire hall-effect module on PB15. The pin is a good choice for a reason
+// worth recording: PB15 is 5 V tolerant, unlike PA0-PA7 and PB0-PB1, which are
+// the ADC-capable pins and are not. A module powered from 5 V -- most of them
+// are -- cannot over-volt it. Nothing else in this firmware touches PB15.
+//
+// These modules are open-collector with a pull-up, so the output idles HIGH and
+// is pulled LOW by the magnet. Measured on hardware: 1 with no magnet, 0 with,
+// both stable across repeated samples. The internal pull-up is enabled too, so
+// the pin still has a defined level if the module is unplugged.
+//
+// FAILURE MODE, READ THIS BEFORE HOMING. With an active-low sensor, a broken
+// signal wire reads exactly like "not triggered". During a seek that means the
+// axis keeps driving until something physical stops it -- and on a ballscrew
+// the thing that stops it may be the ball nut leaving the end of the thread,
+// which scatters the balls and scraps the nut. HOME_MAX_TRAVEL_RAD is what
+// makes that survivable: the seek gives up after a bounded distance instead of
+// trusting a sensor that may no longer be connected.
+#define HOME_SENSOR_PIN         PB15
+#define HOME_SENSOR_ACTIVE_LOW  1
+#define HOME_DEBOUNCE_SAMPLES   4     // consecutive agreeing reads to accept
+
+// Homing motion. Slow and weak deliberately: this is the one operation that
+// drives on purpose towards something solid. Force scales with current, so the
+// seek current is what decides whether a missed trigger dents a bearing race
+// or bends a bracket.
+#define HOME_SEEK_VEL_RAD_S     1.0f
+#define HOME_SEEK_mA            400
+#define HOME_MAX_TRAVEL_RAD     125.0f   // ~20 turns, then abort
+#define HOME_BACKOFF_RAD        0.25f    // clear of the trigger, towards travel
+
 #define LED_PIN     PC13
 #define BTN_DOWN    PA3
 #define BTN_BACK    PB0

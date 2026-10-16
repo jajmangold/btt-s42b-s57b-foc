@@ -45,7 +45,7 @@ TELEM = [
     ("home_raw","I"), ("home_trig","I"), ("home_state","I"), ("homed","I"),
     ("home_angle","f"),
     ("sysclk_hz","I"), ("clock_ok","I"),
-    ("nudge_rev","f"), ("cal_done","I"),
+    ("nudge_rev","f"), ("cal_done","I"), ("cal_saved","I"), ("cal_active","I"),
 ]
 
 def _offsets():

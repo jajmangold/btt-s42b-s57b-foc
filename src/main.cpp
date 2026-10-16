@@ -21,6 +21,7 @@
 #include "A4950Driver.h"
 #include "AxisCan.h"
 #include "StepDir.h"
+#include "CalStore.h"
 #include "crc_probe.h"
 
 static const uint32_t DRIVE_TIMEOUT_MS = 15000;
@@ -74,6 +75,8 @@ struct Telem {
   uint32_t clock_ok;        // 1 = crystal came up and core is at 72 MHz
   float    nudge_rev;       // host-written: revolutions for command 16
   uint32_t cal_done;        // non-zero once the open-loop sweep has filled
+  uint32_t cal_saved;       // 1 = last calSave() wrote and verified
+  uint32_t cal_active;      // 1 = correction is being applied to every read
 };
 volatile Telem g_telem __attribute__((used));
 
@@ -281,7 +284,13 @@ static const uint32_t CAL_SETTLE_MS = 60;
 // volatile, and deliberately so: nothing in the firmware ever reads this back,
 // so without it the compiler correctly proves the stores are dead and removes
 // the array entirely. It is read over SWD, which the compiler cannot see.
-static volatile uint16_t cal_raw[CAL_STEPS];
+// TWO sweeps: forward then reverse, stored back to back. Averaging them
+// cancels hysteresis. A single-direction sweep records where friction let the
+// rotor settle, not where the field actually pointed, so it measures stiction
+// alongside encoder error -- and on this axis that noise was large enough that
+// successive sweeps disagreed by 35 electrical degrees and a table built from
+// one bad pass stalled the motor completely.
+static volatile uint16_t cal_raw[CAL_STEPS * 2];
 
 static void probeCoils(float amps) {
   g_telem.drive_mA = (uint16_t)(amps * 1000);
@@ -609,6 +618,15 @@ void setup() {
   Serial.println(F("UART control ready. 'D?' for help, 'M' for SimpleFOC motor verbs."));
 
   enc.init();
+
+  // Load the encoder correction table before anything can command motion.
+  // Without it this drive may not turn at all -- 50 pole pairs multiply the
+  // part's angle error into electrical degrees. See docs/measurements.md.
+  if (calLoad()) {
+    Serial.println(F("encoder calibration: loaded from flash, correction ON"));
+  } else {
+    Serial.println(F("encoder calibration: NONE STORED -- run tools/calibrate.py"));
+  }
   stepdir.init();
   g_telem.raw_min = 0xFFFF;
   g_telem.raw_max = 0;
@@ -660,6 +678,7 @@ void loop() {
     if (r < g_telem.raw_min) g_telem.raw_min = r;
     if (r > g_telem.raw_max) g_telem.raw_max = r;
   }
+  g_telem.cal_active = tle_cal_enable ? 1 : 0;
   g_telem.angle = enc.getAngle();      // multi-turn, no extra bus traffic
   g_telem.shaft = shaftNow();   // CONTROL frame; .angle stays raw
   g_telem.vel   = enc.getVelocity();
@@ -728,6 +747,9 @@ void loop() {
           markEnergised(); foc_running = true; motor.enable();
         }
         break;
+      case 20:   // persist the current correction table to flash
+        g_telem.cal_saved = calSave() ? 1 : 0;
+        break;
       case 19: {
         // DIAGNOSTIC: open-loop electrical sweep. Steps the field through
         // CAL_STEPS positions spanning one full MECHANICAL revolution, with no
@@ -741,17 +763,19 @@ void loop() {
         // while leaving open-loop parking, which never consults the encoder,
         // looking perfect.
         float a = amps;
-        for (uint16_t k = 0; k < CAL_STEPS; k++) {
+        // forward, then reverse over the same points
+        for (uint16_t n = 0; n < CAL_STEPS * 2; n++) {
+          uint16_t k = (n < CAL_STEPS) ? n : (CAL_STEPS * 2 - 1 - n);
           float elec = (float)k * _2PI * (float)MOTOR_POLE_PAIRS / (float)CAL_STEPS;
           parkAndRead(a * _cos(elec), a * _sin(elec), CAL_SETTLE_MS);
           // Record through getSensorAngle(), NOT readRaw(): readRaw bypasses
           // the correction table, so a verification sweep taken that way is
           // blind to the very thing it is meant to measure. With the table
           // disabled the two agree, so one path serves both roles.
-          cal_raw[k] = (uint16_t)(lroundf(enc.getSensorAngle() * 32768.0f / _2PI) & 0x7FFF);
+          cal_raw[n] = (uint16_t)(lroundf(enc.getSensorAngle() * 32768.0f / _2PI) & 0x7FFF);
         }
         allOff();
-        g_telem.cal_done = CAL_STEPS;
+        g_telem.cal_done = CAL_STEPS * 2;
         break;
       }
       case 17:   // DIAGNOSTIC: force sensor_direction, then align.

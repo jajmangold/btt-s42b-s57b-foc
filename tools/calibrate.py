@@ -84,8 +84,21 @@ def do_sweep(S, enable):
                "mww 0x%08X 800" % (base + nudge.OFF["set_mA"]), "resume"])
     C = base + nudge.OFF["cmd"]
     nudge.ocd(["halt", "mww 0x%08X 0" % C, "resume", "halt", "mww 0x%08X 19" % C, "resume"])
-    time.sleep(N_SWEEP * 0.06 + 8)
-    return read_sweep(S["_ZL7cal_raw"][0], N_SWEEP * 2)
+    time.sleep(N_SWEEP * 2 * 0.06 + 10)
+    both = read_sweep(S["_ZL7cal_raw"][0], N_SWEEP * 4)
+    fwd, rev_raw = both[:N_SWEEP], both[N_SWEEP:]
+    rev = rev_raw[::-1]          # reverse pass was recorded in descending k
+    # circular mean, because readings wrap at 32768
+    out = []
+    for a, b in zip(fwd, rev):
+        d = b - a
+        if d >  FULL//2: d -= FULL
+        if d < -FULL//2: d += FULL
+        out.append(int(round(a + d/2.0)) % FULL)
+    hyst = [abs(((b-a+FULL//2) % FULL) - FULL//2) for a, b in zip(fwd, rev)]
+    print("  hysteresis between passes: mean %.1f counts (%.1f elec deg), max %d"
+          % (sum(hyst)/len(hyst), sum(hyst)/len(hyst)*360/FULL*50, max(hyst)))
+    return out
 
 
 def main():

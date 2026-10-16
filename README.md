@@ -209,6 +209,12 @@ dedicated USB-TTL cable. Three jumpers, and the drive's command set is then
 available from any terminal. The same board has a TWAI controller, so this is
 also a reasonable starting point for a CAN host.
 
+**`tools/pendant.py`** turns any game controller into a jog pendant. It sends
+the drive's own `D4 <v>` commands, so it is not a privileged channel — just a
+convenient way to drive the same interface you can type into. Inside the stick
+deadzone it sends nothing rather than a zero, so every return to centre
+re-proves the deadman watchdog rather than exercising it only on failure.
+
 **`tools/swd.py`** is a bit-banged SWD master for MicroPython, kept as a
 fallback for anyone without a debug probe.
 

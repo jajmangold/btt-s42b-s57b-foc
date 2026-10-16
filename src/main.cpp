@@ -138,6 +138,35 @@ static void allOff() {
 // count mapped straight onto shaft angle. Engaging zeroes the step counter at
 // the current position, so the drive does not lurch to wherever a stale count
 // happened to point.
+// ---------------------------------------------------------------------------
+//  Shaft angle IN THE CONTROL FRAME -- use this for anything compared against
+//  g_telem.target. Never enc.getAngle().
+// ---------------------------------------------------------------------------
+// SimpleFOC does not control on the raw encoder angle. It controls on
+//
+//     shaftAngle() = sensor_direction * sensor->getAngle() - sensor_offset
+//
+// and alignment sets sensor_direction to -1 whenever it finds the encoder
+// counting the opposite way to the motor. On such a board the control frame is
+// NEGATED relative to the encoder, so a target built from enc.getAngle() is in
+// the wrong frame entirely.
+//
+// This is not theoretical. Measured on the ballscrew axis, which aligned to
+// sensor_direction = -1: a request to move +1.257 rad produced a 6.9 rad
+// position error and drove the axis BACKWARDS. It stopped only because the
+// 500 mA nudge current was too weak to continue. At a working current it would
+// have run until it hit something. The same bug sat in "hold position" and in
+// the CAN TARGET handler, where it would have been worse.
+//
+// Before alignment sensor_direction is UNKNOWN, which is 0, so shaftAngle()
+// would return ~0 and every relative move would start from the wrong origin.
+// Fall back to the raw angle until FOC is ready; every caller that commands
+// motion already requires foc_ready, so the fallback only feeds display paths.
+static float shaftNow() {
+  return g_telem.foc_ready ? motor.shaftAngle() : enc.getAngle();
+}
+
+
 static void stepDirEngage(float amps) {
   if (!g_telem.foc_ready) return;
   motor.controller = MotionControlType::angle;
@@ -145,7 +174,7 @@ static void stepDirEngage(float amps) {
   gear_mode = false;
   motor.voltage_limit = amps;
   stepdir.zero();
-  step_shaft0 = enc.getAngle();
+  step_shaft0 = shaftNow();
   g_telem.target = step_shaft0;
   step_mode = true;
   g_telem.step_on = 1;
@@ -163,7 +192,7 @@ static void gearEngage(float k, float amps) {
   gear_master_prev = g_telem.gear_master;
   gear_vel_f = 0.0f;
   gear_t_prev = micros();
-  gear_shaft0  = enc.getAngle();
+  gear_shaft0  = shaftNow();
   gear_master0 = g_telem.gear_master;
   g_telem.target = gear_shaft0;
   g_telem.gear_err_max = 0.0f;
@@ -193,7 +222,7 @@ static void gearMaster(float master) {
 
 // The gearing control law. Returns the velocity command.
 static float gearVelocityCmd() {
-  float err = g_telem.target - enc.getAngle();
+  float err = g_telem.target - shaftNow();
   g_telem.gear_err = err;
   float a = err < 0 ? -err : err;
   if (a > g_telem.gear_err_max) g_telem.gear_err_max = a;
@@ -278,7 +307,7 @@ static void canHandle(const CanFrame& f) {
   switch (CAN_TYPE_OF(f.id)) {
     case CAN_CMD_ENABLE:
       if (f.len >= 1 && f.data[0] && g_telem.foc_ready) {
-        g_telem.target = enc.getAngle();
+        g_telem.target = shaftNow();
         markEnergised(); foc_running = true; motor.enable();
       } else {
         allOff();
@@ -413,7 +442,7 @@ static void homeStart(float dir_vel) {
     return;
   }
   home_dir   = (dir_vel < 0) ? -1.0f : 1.0f;
-  home_start = enc.getAngle();
+  home_start = shaftNow();
   g_telem.homed = 0;
 
   // Deliberately weak: a missed trigger should stall, not break something.
@@ -434,16 +463,16 @@ static void homeStart(float dir_vel) {
 
 static void homeUpdate() {
   if (home_state != HOME_SEEK && home_state != HOME_BACKOFF) return;
-  float travelled = enc.getAngle() - home_start;
+  float travelled = shaftNow() - home_start;
 
   if (home_state == HOME_SEEK) {
     if (homeTriggered()) {
-      g_telem.home_angle = enc.getAngle();
+      g_telem.home_angle = shaftNow();
       g_telem.homed      = 1;
       // Back off far enough to release the sensor, so a subsequent home starts
       // from a known-clear position rather than from on top of the trigger.
       home_vel     = -home_dir * HOME_SEEK_VEL_RAD_S;
-      home_start   = enc.getAngle();
+      home_start   = shaftNow();
       home_state   = HOME_BACKOFF;
       g_telem.home_state = HOME_BACKOFF;
       Serial.print(F("home found at ")); Serial.print(g_telem.home_angle, 4);
@@ -462,7 +491,7 @@ static void homeUpdate() {
   if (!home_released) {
     if (!homeTriggered()) {
       home_released = true;
-      home_rel_ang  = enc.getAngle();
+      home_rel_ang  = shaftNow();
       Serial.print(F("sensor released after "));
       Serial.print(fabsf(RAD_TO_MM(travelled)), 2); Serial.println(F(" mm"));
     } else if (fabsf(travelled) > HOME_BACKOFF_MAX_RAD) {
@@ -473,7 +502,7 @@ static void homeUpdate() {
     }
     return;
   }
-  if (fabsf(enc.getAngle() - home_rel_ang) >= HOME_BACKOFF_EXTRA_RAD) {
+  if (fabsf(shaftNow() - home_rel_ang) >= HOME_BACKOFF_EXTRA_RAD) {
     home_vel = 0.0f;
     allOff();
     home_state = HOME_DONE;
@@ -491,7 +520,7 @@ static void onDrive(char* cmd) {
               motor.controller = MotionControlType::angle;
               jog_mode = gear_mode = step_mode = false;
               motor.voltage_limit = amps;
-              g_telem.target = enc.getAngle();
+              g_telem.target = shaftNow();
               markEnergised(); foc_running = true; motor.enable();
               Serial.println(F("hold")); break;
     case '2': stepDirEngage(amps);          Serial.println(F("step/dir")); break;
@@ -528,7 +557,7 @@ static void onDrive(char* cmd) {
       Serial.println(F("D5 align | DC<mA> current | D? help"));
       Serial.println(F("DS sensor status | DH<+/-v> home seek (MOVES THE AXIS)"));
       Serial.print(F("  ready="));   Serial.print(g_telem.foc_ready);
-      Serial.print(F(" shaft="));    Serial.print(enc.getAngle(), 3);
+      Serial.print(F(" shaft="));    Serial.print(shaftNow(), 3);
       Serial.print(F(" rad  mA="));  Serial.print(g_telem.set_mA ? g_telem.set_mA : BRINGUP_mA);
       Serial.print(F(" faults="));   Serial.print(g_telem.linkfail + g_telem.crc_fails);
       Serial.print(F(" steps="));    Serial.println(g_telem.step_count);
@@ -622,7 +651,7 @@ void loop() {
     if (r > g_telem.raw_max) g_telem.raw_max = r;
   }
   g_telem.angle = enc.getAngle();      // multi-turn, no extra bus traffic
-  g_telem.shaft = enc.getAngle();
+  g_telem.shaft = shaftNow();   // CONTROL frame; .angle stays raw
   g_telem.vel   = enc.getVelocity();
   g_telem.seq++;
 
@@ -685,7 +714,7 @@ void loop() {
         if (g_telem.foc_ready) {
           motor.controller = MotionControlType::angle; jog_mode = false;
           motor.voltage_limit = amps;
-          g_telem.target = enc.getAngle();
+          g_telem.target = shaftNow();
           markEnergised(); foc_running = true; motor.enable();
         }
         break;
@@ -705,7 +734,7 @@ void loop() {
         jog_mode = gear_mode = step_mode = false;
         motor.voltage_limit = AMPS(NUDGE_mA);
         motor.velocity_limit = NUDGE_VEL_RAD_S;              // gentle, not the default 20
-        g_telem.target = enc.getAngle() + rev * _2PI;
+        g_telem.target = shaftNow() + rev * _2PI;
         markEnergised(); foc_running = true; motor.enable();
         break;
       }
@@ -713,7 +742,7 @@ void loop() {
         if (g_telem.foc_ready) {
           motor.controller = MotionControlType::angle; jog_mode = false;
           motor.voltage_limit = amps;
-          g_telem.target = enc.getAngle() + _2PI;
+          g_telem.target = shaftNow() + _2PI;
           markEnergised(); foc_running = true; motor.enable();
         }
         break;

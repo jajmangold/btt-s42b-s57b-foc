@@ -90,9 +90,14 @@ def status(base):
     # loop has not yet populated g_telem. That looks exactly like "sensor
     # triggered, angle zero". Give it a moment rather than believing it.
     ang = struct.unpack("<f", struct.pack("<I", read_words(base, OFF["angle"])[0]))[0]
+    ctl = struct.unpack("<f", struct.pack("<I", read_words(base, OFF["shaft"])[0]))[0]
     rdy = read_words(base, OFF["foc_ready"])[0]
     raw, trg = read_words(base, OFF["home_raw"], 2)
-    print("  shaft      %.4f rad  (%.2f mm from power-on)" % (ang, ang * LEAD_MM / 6.283185))
+    # Two frames, and the difference matters: targets live in the CONTROL
+    # frame, which is negated from the encoder when sensor_direction is -1.
+    print("  encoder    %+.4f rad  (raw sensor)" % ang)
+    print("  control    %+.4f rad  (%+.2f mm) <- targets are in THIS frame"
+          % (ctl, ctl * LEAD_MM / 6.283185))
     print("  foc_ready  %d%s" % (rdy, "" if rdy else "   <-- run align (cmd 5) first"))
     print("  sensor     pin=%d  %s" % (raw, "TRIGGERED" if trg else "clear"))
     return rdy

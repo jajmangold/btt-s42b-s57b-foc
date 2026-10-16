@@ -358,3 +358,38 @@ would cancel it, which is what SimpleFOC's `CalibratedSensor` does.
 
 **The table currently lives in RAM and is lost on reset.** Persisting it to
 flash is the obvious next step.
+
+### Status: not yet reliable, and why
+
+The correction demonstrably works — one table produced **9 of 10** completed
+moves at ±0.05 mm, from a baseline of 0 of 10. It has not been reproducible.
+Successive tables from the same procedure give anywhere from 9/10 to 0/10.
+
+The reason is that the *measurement* is unstable. Peak error across six sweeps
+of the same hardware:
+
+| sweep | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| peak (elec°) | 114 | 110 | 128 | 145 | 134 | 151 |
+
+Two causes identified and partly addressed:
+
+**Hysteresis.** Measured at 30.9 counts, 17 electrical degrees, between forward
+and reverse passes. The sweep is now bidirectional and averaged, which removes
+it from the average but not from the noise.
+
+**The fit did not close the loop.** Stepping a 50-pole-pair motor through 50
+electrical revolutions must return it exactly where it started, so a sweep spans
+exactly 32768 counts. Fitting the slope freely let endpoint noise tilt the line,
+producing a residual of +244 at the start and −89 at the end of the same
+revolution — a 311-count step across a seam that is physically continuous. The
+slope is now fixed by geometry and only the offset is fitted, which drops the
+seam to 30 counts.
+
+**The likely remaining cause is that calibration is being done with the motor
+coupled to the ballscrew.** Open-loop parking assumes the rotor settles where
+the field points. On a loaded axis it settles where field torque balances load
+and friction, which varies with position and direction — so the sweep measures
+the mechanism as much as the encoder. The correction table is a property of the
+magnet, rotor and sensor alone, so it should be measured with the motor
+**decoupled and unloaded**, then used once re-coupled.

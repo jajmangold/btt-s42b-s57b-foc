@@ -60,11 +60,20 @@ def unwrap(v):
 
 
 def residuals(v):
-    """Deviation of the unwrapped encoder from a straight line, in counts."""
+    """Deviation of the unwrapped encoder from the IDEAL line, in counts.
+
+    The slope is NOT fitted. Stepping a 50-pole-pair motor through 50 electrical
+    revolutions must return it to exactly where it started, so one sweep spans
+    exactly one mechanical revolution: 32768 counts over n steps, sign taken
+    from the measured direction. Fitting the slope freely instead lets endpoint
+    noise tilt the whole line -- which is what produced a residual of +244 at
+    the start and -89 at the end of the same revolution, a 333-count step across
+    a seam that is physically continuous.
+    """
     un = unwrap(v); n = len(un)
-    sx = sum(range(n)); sy = sum(un)
-    sxx = sum(i*i for i in range(n)); sxy = sum(i*un[i] for i in range(n))
-    m = (n*sxy - sx*sy) / (n*sxx - sx*sx); b = (sy - m*sx) / n
+    sign = 1.0 if un[-1] >= un[0] else -1.0
+    m = sign * FULL / float(n)              # fixed by geometry, not fitted
+    b = sum(un[i] - m*i for i in range(n)) / n   # offset only
     return [un[i] - (m*i + b) for i in range(n)], m, b
 
 

@@ -2,3 +2,7 @@
 .vscode/
 *.bin
 *.elf
+
+# credentials: never commit these
+secrets.h
+**/secrets.h

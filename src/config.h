@@ -41,6 +41,27 @@
   #define FACTORY_DEFAULT_mA     800
 #endif
 
+// ---------------------------------------------------------------------------
+//  MOTOR current limit -- separate from the BOARD limit above
+// ---------------------------------------------------------------------------
+// DRIVER_MAX_mA is what the board can deliver. MOTOR_MAX_mA is what the motor
+// on the end of it can survive, and it is the lower of the two that matters.
+// An S57B will drive 3300 mA into a motor rated 2800 mA without complaint; the
+// motor is what fails, slowly, as insulation damage you do not see until it
+// shorts.
+//
+// Set this to the motor's rated phase current. Nothing in the firmware will
+// command more, whatever arrives over CAN or UART.
+//
+//   JK57HS76-2804  NEMA 23, 76 mm, 2.8 A/phase  ->  2800
+//
+#ifndef MOTOR_MAX_mA
+#define MOTOR_MAX_mA            DRIVER_MAX_mA   // default: trust the board limit
+#endif
+
+// The effective ceiling: whichever of board and motor gives out first.
+#define CURRENT_CEILING_mA  (MOTOR_MAX_mA < DRIVER_MAX_mA ? MOTOR_MAX_mA : DRIVER_MAX_mA)
+
 // Conservative starting current for bring-up. Raise deliberately, not by habit.
 #define BRINGUP_mA              (FACTORY_DEFAULT_mA / 2)
 

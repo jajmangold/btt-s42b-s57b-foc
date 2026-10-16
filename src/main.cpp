@@ -281,7 +281,7 @@ static void canHandle(const CanFrame& f) {
     case CAN_CMD_CURRENT:
       if (f.len >= 2) {
         uint16_t ma = (uint16_t)(f.data[0] | (f.data[1] << 8));
-        if (ma > DRIVER_MAX_mA) ma = DRIVER_MAX_mA;   // never trust the bus
+        if (ma > CURRENT_CEILING_mA) ma = CURRENT_CEILING_mA;  // never trust the bus
         g_telem.set_mA = ma;
         motor.voltage_limit = AMPS(ma);
       }
@@ -355,7 +355,7 @@ static void onDrive(char* cmd) {
               Serial.print(F("align ")); Serial.println(g_telem.foc_ready ? F("ok") : F("FAILED"));
               break;
     case 'C': { int ma = atoi(cmd + 1);
-                if (ma > DRIVER_MAX_mA) ma = DRIVER_MAX_mA;   // never trust input
+                if (ma > CURRENT_CEILING_mA) ma = CURRENT_CEILING_mA;  // never trust input
                 if (ma > 0) g_telem.set_mA = ma;
                 Serial.print(F("current ")); Serial.print(g_telem.set_mA
                   ? g_telem.set_mA : BRINGUP_mA); Serial.println(F(" mA")); break; }
@@ -413,7 +413,7 @@ void setup() {
 
   // "volts" == amps, see config.h
   driver.voltage_power_supply = SIMPLEFOC_VPS;
-  driver.voltage_limit        = AMPS(DRIVER_MAX_mA);
+  driver.voltage_limit        = AMPS(CURRENT_CEILING_mA);
   driver.init();
 
   Serial.print(F("PWM carrier = ")); Serial.print(driver.carrierHz() / 1000);

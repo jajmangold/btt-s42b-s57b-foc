@@ -69,6 +69,7 @@ a different toolchain.
 | CAN | 500 kbit/s exact, 77.8% sample point, zero errors |
 | Electronic gearing | 90–136 counts following error at 2 rad/s |
 | Full power | validated to 3300 mA (100% duty), sustained, no degradation |
+| STEP/DIR | one commanded revolution within 12 counts of 360° |
 
 See [docs/measurements.md](docs/measurements.md) for how each was obtained.
 
@@ -121,13 +122,31 @@ Full detail, including clone-probe quirks, in [docs/flashing.md](docs/flashing.m
 
 | Interface | Connector | Use |
 |---|---|---|
-| **STEP / DIR / EN** | P1 | Drop-in replacement for stock. Works with FluidNC, LinuxCNC, GRBL, anything. |
+| **STEP / DIR / EN** | P1 | Drop-in replacement for stock. Works with FluidNC, LinuxCNC, GRBL, anything. Pulses counted in **hardware**. |
 | **CAN** | J2 | Digital control plus telemetry. 500 kbit/s. |
 | **UART** | P7 | Configuration and diagnostics. 38400 8N1. |
 
 CAN is where this firmware earns its keep: over STEP/DIR a drive is a black box
 with one alarm wire, whereas CAN reports actual position, following error, and
 the specific reason for a fault. Protocol in [docs/protocol.md](docs/protocol.md).
+
+### STEP / DIR
+
+Step pulses are counted by **TIM2 in hardware** (PA0 is the timer's external
+clock input), so the step rate costs no CPU and cannot be missed by a busy
+control loop. Direction changes drive an interrupt that flips the counter
+between up and down, so a direction change takes effect immediately rather
+than at the next poll.
+
+Set `STEP_DIR_STEPS_PER_REV` to match the microstepping your controller is
+configured for — it is the only number that has to agree between host and
+drive. Under FOC, microstepping is a host-side fiction rather than something
+the drive does.
+
+`ENABLE` is ignored unless you define `STEP_DIR_USE_ENABLE`. That is
+deliberate: the polarity of that input has not been confirmed on hardware, and
+guessing it wrong in the permissive direction would energise a motor the host
+believes is released.
 
 ### Electronic gearing
 

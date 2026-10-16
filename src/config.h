@@ -82,6 +82,33 @@
 #define P1_DIR_PIN    PA1
 #define P1_EN_PIN     PA2
 
+// --- STEP/DIR behaviour ----------------------------------------------------
+// Steps per shaft revolution, as the HOST believes it. Set this to match the
+// microstepping your controller is configured for; it is the only number that
+// has to agree between the two. The factory firmware took this from the DIP
+// switches (2/4/8/16/32 microsteps x 200 full steps); here it is explicit,
+// because under FOC microstepping is a host-side fiction rather than anything
+// the drive does.
+#ifndef STEP_DIR_STEPS_PER_REV
+#define STEP_DIR_STEPS_PER_REV  3200    // 200 x 16, a common default
+#endif
+
+// Level on DIR that means "count down". Flip if your axis runs backwards --
+// this is the one-line fix, rather than rewiring or inverting in the host.
+#ifndef STEP_DIR_REVERSE_LEVEL
+#define STEP_DIR_REVERSE_LEVEL  HIGH
+#endif
+
+// ENABLE is IGNORED unless STEP_DIR_USE_ENABLE is defined. That is deliberate:
+// the polarity of this input has not been confirmed on hardware, and guessing
+// it wrong in the "enable" direction would energise a motor that the host
+// believes is released. Opting in is a decision the integrator should make
+// knowingly, after checking their own board.
+// #define STEP_DIR_USE_ENABLE
+#ifndef STEP_DIR_DISABLE_LEVEL
+#define STEP_DIR_DISABLE_LEVEL  LOW
+#endif
+
 #define UART1_TX  PA9     // header P7, 38400 8N1 under factory firmware
 #define UART1_RX  PA10
 // SWD: PA13 = SWDIO, PA14 = SWCLK, on header P7. THE ONLY WAY IN. Do not remap.

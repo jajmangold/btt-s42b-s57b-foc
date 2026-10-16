@@ -171,6 +171,40 @@ Two observations worth keeping:
 
 ---
 
+## STEP / DIR
+
+Pulses are counted by TIM2 in external clock mode 2, verified from the
+registers on a running board:
+
+```
+CR1  = 0x00000011   CEN=1
+SMCR = 0x00004700   ECE=1 (external clock mode 2), ETF=7 (input filter)
+PSC  = 0   ARR = 0xFFFF
+```
+
+Position following was exercised by writing `TIM2->CNT` over SWD to simulate
+counted pulses, at 3200 steps/rev:
+
+| Pulses | Expected | Measured | Error |
+|---|---|---|---|
+| 800 | 1.5708 rad | 1.6038 | +172 counts |
+| 1600 | 3.1416 rad | 3.1673 | +134 counts |
+| 2400 | 4.7124 rad | 4.7377 | +132 counts |
+| **3200** | **6.2832 rad** | **6.2855** | **+12 counts** |
+
+`step_count` tracked the hardware counter exactly at every point. One full
+commanded revolution landed within **12 counts of 360 degrees**.
+
+The intermediate errors are the position loop settling: each sample commanded
+an instantaneous quarter-turn jump, which no real host would do — a controller
+ramps. They are a property of the test, not of the interface.
+
+**Not tested:** the physical pulse input. Nothing was connected to P1, so the
+optocouplers, their input filtering and real pulse timing are unverified. The
+counter, the direction interrupt and the position mapping are all proven.
+
+---
+
 ## CAN
 
 Loopback self-test passes: an 8-byte probe frame returns byte-identical.

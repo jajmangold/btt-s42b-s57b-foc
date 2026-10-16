@@ -7,10 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **STEP/DIR/EN input on P1.** Pulses are counted by TIM2 in hardware via its
+  external clock input, so step rate costs no CPU and cannot be missed by a
+  busy control loop. Direction changes drive an interrupt that flips the
+  counter, taking effect immediately. This is the drop-in path for FluidNC,
+  LinuxCNC, GRBL or any standard breakout.
+
 ### Planned
 
-- STEP/DIR/EN input on P1, using TIM2 external clock so pulses are counted in
-  hardware rather than by interrupt
+- Physical pulse input validation (the counter and mapping are proven, the
+  optocoupler path is not)
 - Physical CAN bus validation against a second node (only loopback is proven)
 - Coil current measured with a meter rather than derived
 - S42B V2.0 validation on real hardware

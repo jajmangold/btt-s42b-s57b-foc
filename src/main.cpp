@@ -20,11 +20,13 @@
 #include "TLE5012B.h"
 #include "A4950Driver.h"
 #include "AxisCan.h"
+#include "StepDir.h"
 #include "crc_probe.h"
 
 static const uint32_t DRIVE_TIMEOUT_MS = 15000;
 
 TLE5012B enc(ENC_CS);
+StepDir  stepdir;
 A4950Driver driver;                 // owns TIM3; see A4950Driver.h for why
 AxisCan    can;
 StepperMotor motor = StepperMotor(MOTOR_POLE_PAIRS);
@@ -59,6 +61,9 @@ struct Telem {
   float    gear_err;        // current following error, rad
   float    gear_err_max;    // worst following error since engage, rad
   uint32_t gear_on;         // 1 = gearing engaged
+  int32_t  step_count;      // accumulated STEP pulses, signed by DIR
+  uint32_t step_raw;        // TIM2 counter, for checking the hardware directly
+  uint32_t step_on;         // 1 = following STEP/DIR
 };
 volatile Telem g_telem __attribute__((used));
 
@@ -88,8 +93,10 @@ static uint32_t jog_deadline = 0;        // deadman: jog dies when this passes
 // The feedforward term carries the motion; the error term only trims. That
 // removes the structural lag instead of papering over it with a huge P.
 static const float GEAR_KP = 25.0f;      // rad/s of correction per rad of error
+static bool  step_mode = false;      // following step pulses from the host
 static bool  gear_mode = false;
 static float gear_shaft0 = 0.0f, gear_master0 = 0.0f;
+static float step_shaft0 = 0.0f;   // shaft angle when STEP/DIR was engaged
 static float gear_master_prev = 0.0f, gear_vel_f = 0.0f;
 static uint32_t gear_t_prev = 0;
 
@@ -104,9 +111,31 @@ static void allOff() {
   foc_running = false;
   jog_mode = false;
   gear_mode = false;
+  step_mode = false;
+  g_telem.step_on = 0;
   g_telem.gear_on = 0;
   g_telem.jog_vel = 0.0f;
   g_telem.drive_mA = 0;
+}
+
+// Follow step pulses from the host. Position control, with the host's step
+// count mapped straight onto shaft angle. Engaging zeroes the step counter at
+// the current position, so the drive does not lurch to wherever a stale count
+// happened to point.
+static void stepDirEngage(float amps) {
+  if (!g_telem.foc_ready) return;
+  motor.controller = MotionControlType::angle;
+  jog_mode = false;
+  gear_mode = false;
+  motor.voltage_limit = amps;
+  stepdir.zero();
+  step_shaft0 = enc.getAngle();
+  g_telem.target = step_shaft0;
+  step_mode = true;
+  g_telem.step_on = 1;
+  markEnergised();
+  foc_running = true;
+  motor.enable();
 }
 
 static void gearEngage(float k, float amps) {
@@ -268,6 +297,12 @@ static void canHandle(const CanFrame& f) {
         gearMaster(x);
       }
       break;
+    case CAN_CMD_STEPDIR:
+      if (f.len >= 1 && f.data[0])
+        stepDirEngage(AMPS(g_telem.set_mA ? g_telem.set_mA : BRINGUP_mA));
+      else
+        allOff();
+      break;
     case CAN_CMD_PING:
       can.send(CAN_ID_OF(CAN_NODE_ID, CAN_MSG_PONG), BOARD_TAG, 4);
       break;
@@ -297,6 +332,7 @@ void setup() {
   Serial.println(F(" : SimpleFOC firmware, idle ==="));
 
   enc.init();
+  stepdir.init();
   g_telem.raw_min = 0xFFFF;
   g_telem.raw_max = 0;
   g_telem.stat    = enc.readStatus();
@@ -465,6 +501,9 @@ void loop() {
         g_telem.expect_counts = (float)status_ok;
         break;
       }
+      case 15:                                  // follow STEP/DIR from P1
+        stepDirEngage(amps);
+        break;
       case 9:
       default:
         allOff();
@@ -478,6 +517,19 @@ void loop() {
     // flaky link shows up as a number instead of as mystery stutter.
     g_telem.jog_vel = 0.0f;
     g_telem.jog_stops++;
+  }
+
+  if (step_mode) {
+    stepdir.update();
+    g_telem.step_count = stepdir.steps();
+    g_telem.step_raw   = stepdir.rawCount();
+    if (stepdir.hostEnabled()) {
+      g_telem.target = step_shaft0 + stepdir.angle();
+    } else {
+      // Host has released the drive. Stop holding, but keep following the
+      // counter so position is still correct when it enables again.
+      allOff();
+    }
   }
 
   if (foc_running) {

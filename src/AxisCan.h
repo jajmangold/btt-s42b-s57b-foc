@@ -34,6 +34,7 @@ enum : uint8_t {
   CAN_CMD_JOG     = 0x5,   // float32 rad/s. WATCHDOGGED -- see below.
   CAN_CMD_GEAR_K  = 0x6,   // float32 ratio k; engages gearing at current pos
   CAN_CMD_GEAR_X  = 0x7,   // float32 master position, rad. Broadcast ~1 kHz.
+  CAN_CMD_STEPDIR = 0xA,   // uint8 0/1: follow STEP/DIR pulses on P1
 };
 
 // Jog is the ONE command where the link sits in the control path, so it is

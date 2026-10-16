@@ -4,13 +4,22 @@
 #error "A4950Driver programs STM32F1 TIM3/GPIOB registers directly"
 #endif
 
-// 72 MHz / (ARR+1) with PSC=0. 513 -> 140.1 kHz, matching the factory
-// carrier and comfortably above hearing. Keep ARR >= 255 or duty resolution
-// gets coarse. Defined in config.h so docs and code cannot drift apart.
-static const uint32_t CARRIER_ARR = PWM_CARRIER_ARR;
+// Target carrier, well above hearing and matching the factory value, which is
+// what the board's VREF RC filter was designed around. ARR is computed from
+// the TIMER CLOCK AT RUNTIME rather than assuming a 72 MHz core, so the
+// carrier stays correct even if the crystal fails and the part falls back to
+// the internal RC. Keep ARR >= 255 or duty resolution gets coarse.
+extern uint32_t apb1TimerClock();
+static const uint32_t CARRIER_HZ = 140000;
+static uint32_t carrierArr() {
+  uint32_t arr = (apb1TimerClock() / CARRIER_HZ) - 1;
+  if (arr < 255)   arr = 255;
+  if (arr > 65535) arr = 65535;
+  return arr;
+}
 
 uint32_t A4950Driver::carrierHz() const {
-  return 72000000UL / ((TIM3->PSC + 1) * (TIM3->ARR + 1));
+  return apb1TimerClock() / ((TIM3->PSC + 1) * (TIM3->ARR + 1));
 }
 
 void a4950_claim_pins() {
@@ -55,7 +64,7 @@ int A4950Driver::init() {
 
   TIM3->CR1   = 0;                       // stop while reconfiguring
   TIM3->PSC   = 0;
-  TIM3->ARR   = CARRIER_ARR;
+  TIM3->ARR   = carrierArr();
   TIM3->CCMR1 = (6UL << 4)  | TIM_CCMR1_OC1PE     // CH1 PWM mode 1, preloaded
               | (6UL << 12) | TIM_CCMR1_OC2PE;    // CH2 PWM mode 1, preloaded
   TIM3->CCER  = TIM_CCER_CC1E | TIM_CCER_CC2E;

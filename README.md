@@ -88,6 +88,14 @@ owns `TIM3` directly at 140.1 kHz. Fixing it reduced hold hunting from 13 counts
 to 2, and took a commanded revolution from stalling 0.30 rad short to repeating
 within 0.0015 rad.
 
+**The clock is wrong by default.** The core's generic STM32F103 configuration
+runs the PLL from the internal RC at 64 MHz and never enables the crystal. CAN
+then runs at 444 kbit/s while believing it is at 500, and UART at 43191 baud
+while believing it is at 38400. Loopback cannot catch it — both ends share the
+error — so it would first appear as "CAN doesn't work" against a real peer.
+This firmware configures HSE x9 = 72 MHz and derives every rate from the clock
+actually achieved.
+
 **The units lie.** `StepperDriver` treats duty as a winding *voltage*. On this
 board duty sets a current *limit* via VREF. Declaring
 `voltage_power_supply` as the full-duty current in amps makes SimpleFOC's

@@ -4,8 +4,12 @@
 #error "AxisCan programs STM32F1 bxCAN registers directly"
 #endif
 
-// APB1 on this part is 36 MHz (72 MHz core, APB1 prescaler 2).
-static const uint32_t CAN_APB1_HZ = 36000000UL;
+// CAN bit timing is derived from APB1 AT RUNTIME, never from an assumed core
+// frequency. If the crystal fails and the core falls back to the internal RC,
+// APB1 becomes 32 MHz instead of 36 and a nominal 500 kbit/s silently becomes
+// 444 kbit/s -- which loopback cannot detect, because both ends share the
+// error. It only shows up against a real peer. Reading the actual clock makes
+// the bit rate correct either way.
 static const uint32_t TQ_PER_BIT  = 18;   // SYNC 1 + TS1 13 + TS2 4
 static const uint32_t TS1_TQ      = 13;
 static const uint32_t TS2_TQ      = 4;
@@ -32,7 +36,7 @@ in_init:
   CAN1->MCR &= ~(CAN_MCR_TTCM | CAN_MCR_ABOM | CAN_MCR_AWUM |
                  CAN_MCR_NART | CAN_MCR_RFLM | CAN_MCR_TXFP);
 
-  uint32_t prescaler = CAN_APB1_HZ / (bitrate_hz * TQ_PER_BIT);
+  uint32_t prescaler = HAL_RCC_GetPCLK1Freq() / (bitrate_hz * TQ_PER_BIT);
   if (prescaler < 1) prescaler = 1;
   CAN1->BTR = ((SJW_TQ - 1) << 24) |
               ((TS2_TQ - 1) << 20) |

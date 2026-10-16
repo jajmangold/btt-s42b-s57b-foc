@@ -4,6 +4,42 @@ Every claim this project makes, and how it was obtained. Results are from an
 **S57B V2.0** unless stated. Where something is derived rather than measured,
 it says so plainly.
 
+## The system clock -- read this before trusting any rate
+
+The Arduino core's default configuration for a generic STM32F103 board runs the
+PLL from **HSI/2**, giving 4 MHz x 16 = **64 MHz**, and never enables the
+crystal at all. That is a reasonable default for a board that might not have
+one. These boards do, and the difference is not cosmetic:
+
+| | assumed (72 MHz) | actual (64 MHz) | error |
+|---|---|---|---|
+| UART baud | 38400 | 43191 | 12.5% |
+| **CAN bit rate** | 500000 | **444444** | **11%** |
+| PWM carrier | 140.1 kHz | 124.5 kHz | harmless |
+
+**CAN loopback cannot detect this**, because both ends of a loopback share the
+same wrong clock. The fault only appears the first time the drive meets a
+correctly-clocked peer on a real bus — at which point nothing works and the
+wiring gets the blame.
+
+The internal RC is also only +-1-2% over temperature, against +-50 ppm for a
+crystal. CAN needs the crystal regardless of whether the arithmetic is fixed.
+
+`src/ClockConfig.cpp` overrides the core default to run HSE x9 = 72 MHz, with a
+fallback to the 64 MHz HSI configuration if the crystal fails to start rather
+than hanging. Verified on hardware:
+
+```
+HSEON=1 HSERDY=1   PLLSRC=HSE   PLLMUL=x9   SYSCLK = 72 MHz
+UART   BRR=0x0753 -> 38400 baud, 0.00% error
+CAN    brp=4      -> exactly 500000 bit/s
+PWM    ARR=513    -> 140.1 kHz
+```
+
+Every rate in this firmware is now derived from the clock **actually achieved**
+at runtime, not from an assumed core frequency, and `clock_ok` in telemetry
+reports whether the crystal came up.
+
 ## Method
 
 Telemetry is read out of a live global in RAM over SWD **without halting the

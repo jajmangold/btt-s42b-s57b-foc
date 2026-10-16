@@ -27,6 +27,7 @@ static const uint32_t DRIVE_TIMEOUT_MS = 15000;
 
 TLE5012B enc(ENC_CS);
 StepDir  stepdir;
+Commander command = Commander(Serial);
 A4950Driver driver;                 // owns TIM3; see A4950Driver.h for why
 AxisCan    can;
 StepperMotor motor = StepperMotor(MOTOR_POLE_PAIRS);
@@ -64,6 +65,8 @@ struct Telem {
   int32_t  step_count;      // accumulated STEP pulses, signed by DIR
   uint32_t step_raw;        // TIM2 counter, for checking the hardware directly
   uint32_t step_on;         // 1 = following STEP/DIR
+  uint32_t sysclk_hz;       // measured, not assumed
+  uint32_t clock_ok;        // 1 = crystal came up and core is at 72 MHz
 };
 volatile Telem g_telem __attribute__((used));
 
@@ -310,6 +313,61 @@ static void canHandle(const CanFrame& f) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// UART control, on P7 at 38400 8N1.
+//
+// SimpleFOC's Commander provides the standard motor verbs -- target, PID
+// gains, limits, monitoring -- so anyone who has used SimpleFOC already knows
+// this interface and existing tooling works unchanged. 'D' adds the drive
+// modes this firmware provides on top.
+//
+// Safety note: Commander cannot be used to exceed the board's rating. Duty is
+// |U| / voltage_power_supply and voltage_power_supply IS the full-duty
+// current, so the hardware bound holds whatever a user types.
+// ---------------------------------------------------------------------------
+static void onMotor(char* cmd) { command.motor(&motor, cmd); }
+
+static void onDrive(char* cmd) {
+  float amps = AMPS(g_telem.set_mA ? g_telem.set_mA : BRINGUP_mA);
+  switch (cmd[0]) {
+    case '0': allOff();                     Serial.println(F("off")); break;
+    case '1': if (!g_telem.foc_ready) { Serial.println(F("align first: D5")); break; }
+              motor.controller = MotionControlType::angle;
+              jog_mode = gear_mode = step_mode = false;
+              motor.voltage_limit = amps;
+              g_telem.target = enc.getAngle();
+              markEnergised(); foc_running = true; motor.enable();
+              Serial.println(F("hold")); break;
+    case '2': stepDirEngage(amps);          Serial.println(F("step/dir")); break;
+    case '3': gearEngage(atof(cmd + 1), amps);
+              Serial.print(F("gear k=")); Serial.println(g_telem.gear_k, 4); break;
+    case '4': jogCommand(atof(cmd + 1), amps);
+              Serial.print(F("jog ")); Serial.println(g_telem.jog_vel, 3); break;
+    case '5': markEnergised(); motor.initFOC();
+              g_telem.zero_elec  = motor.zero_electric_angle;
+              g_telem.sensor_dir = (int32_t)motor.sensor_direction;
+              g_telem.foc_ready  = (motor.motor_status == FOCMotorStatus::motor_ready) ? 1 : 0;
+              allOff();
+              Serial.print(F("align ")); Serial.println(g_telem.foc_ready ? F("ok") : F("FAILED"));
+              break;
+    case 'C': { int ma = atoi(cmd + 1);
+                if (ma > DRIVER_MAX_mA) ma = DRIVER_MAX_mA;   // never trust input
+                if (ma > 0) g_telem.set_mA = ma;
+                Serial.print(F("current ")); Serial.print(g_telem.set_mA
+                  ? g_telem.set_mA : BRINGUP_mA); Serial.println(F(" mA")); break; }
+    case '?':
+    default:
+      Serial.println(F("D0 off | D1 hold | D2 step/dir | D3<k> gear | D4<v> jog"));
+      Serial.println(F("D5 align | DC<mA> current | D? help"));
+      Serial.print(F("  ready="));   Serial.print(g_telem.foc_ready);
+      Serial.print(F(" shaft="));    Serial.print(enc.getAngle(), 3);
+      Serial.print(F(" rad  mA="));  Serial.print(g_telem.set_mA ? g_telem.set_mA : BRINGUP_mA);
+      Serial.print(F(" faults="));   Serial.print(g_telem.linkfail + g_telem.crc_fails);
+      Serial.print(F(" steps="));    Serial.println(g_telem.step_count);
+      break;
+  }
+}
+
 void setup() {
   // PB4/PB3/PA15 are JTAG pins at reset. NOJTAG frees them and keeps SW-DP,
   // so the ST-Link stays alive. Must precede any pin setup. See CHANGELOG.
@@ -330,6 +388,10 @@ void setup() {
   Serial.println();
   Serial.print(F("=== ")); Serial.print(F(BOARD_NAME));
   Serial.println(F(" : SimpleFOC firmware, idle ==="));
+
+  command.add('M', onMotor, "motor");
+  command.add('D', onDrive, "drive mode");
+  Serial.println(F("UART control ready. 'D?' for help, 'M' for SimpleFOC motor verbs."));
 
   enc.init();
   stepdir.init();
@@ -363,6 +425,12 @@ void setup() {
 
   motor.init();
   allOff();                                    // never idle energised
+  extern bool clockIsCorrect();
+  g_telem.sysclk_hz = HAL_RCC_GetSysClockFreq();
+  g_telem.clock_ok  = clockIsCorrect() ? 1 : 0;
+  Serial.print(F("SYSCLK ")); Serial.print(g_telem.sysclk_hz / 1000000);
+  Serial.println(g_telem.clock_ok ? F(" MHz (crystal)") : F(" MHz -- HSE FAILED, CAN/UART rates affected"));
+
   g_telem.magic = 0x53354237;
 }
 
@@ -551,6 +619,8 @@ void loop() {
     g_telem.can_rx = can.rxCount();
     g_telem.can_err = can.errCount();
   }
+
+  command.run();        // non-blocking; returns immediately with no input
 
   static uint32_t last = 0;
   if (millis() - last >= 200) {

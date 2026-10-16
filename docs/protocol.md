@@ -27,8 +27,39 @@ error**.
 ID = (node_address << 4) | message_type
 ```
 
-A single accept-all filter is installed and addressing is done in software, so
-additional axes need no filter-bank changes.
+7 bits of address, 4 bits of message type. A single accept-all filter is
+installed and addressing is done in software, so additional axes need no
+filter-bank changes.
+
+### Node address
+
+Taken from the four DIP switches at boot, as `switches + 1`, giving **1..16**.
+The switches are input-with-pull-up so ON reads 0, and the address inverts
+that: ON = 1. A board with every switch OFF is node 1.
+
+Build with `-D CAN_NODE_ID_FIXED=n` to ignore the switches.
+
+The switches are read immediately after the `SWJ_CFG` NOJTAG remap, and cannot
+be read before it: DIP 3 is PB3 (JTDO) and DIP 4 is PA15 (JTDI), which belong
+to the JTAG peripheral out of reset and read as such whatever `pinMode()` is
+asked for.
+
+### Group address
+
+**Address 0 is a group address.** Every node acts on a frame sent to it, and no
+node ever transmits from it — replies and telemetry always carry the node's own
+address, so two drives can never answer as one.
+
+| Use | Why it needs the group address |
+|---|---|
+| Ganged axis | One `TARGET` commands both drives in the same instant, instead of one frame each leaving the second ~230 µs behind at 500 kbit/s |
+| Gearing | One `GEAR_X` master broadcast reaches every follower |
+| Stop | "All axes off" as a single frame |
+| Enumeration | A group `PING` makes every node reply with its own address |
+
+Group frames occupy IDs `0x000`–`0x00F`, numerically below every node's
+telemetry. Since the lower ID wins CAN arbitration, a stop command cannot be
+delayed behind drive chatter.
 
 ## Host to drive
 

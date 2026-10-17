@@ -487,7 +487,10 @@ static void homeStart(float dir_vel) {
   g_telem.homed = 0;
 
   // Deliberately weak: a missed trigger should stall, not break something.
-  motor.voltage_limit = AMPS(HOME_SEEK_mA);
+  // setMotionLimits() rather than setting voltage_limit alone, so the velocity
+  // clamp and both PID limits belong to the seek instead of being inherited
+  // from whatever mode ran last.
+  setMotionLimits(HOME_SEEK_VEL_RAD_S, AMPS(HOME_SEEK_mA));
   motor.controller    = MotionControlType::velocity;
   jog_mode = gear_mode = step_mode = false;
   markEnergised(); foc_running = true; motor.enable();
@@ -504,6 +507,18 @@ static void homeStart(float dir_vel) {
 
 static void homeUpdate() {
   if (home_state != HOME_SEEK && home_state != HOME_BACKOFF) return;
+
+  // Keep the drive watchdog fed while a seek is genuinely in progress.
+  //
+  // DRIVE_TIMEOUT_MS exists to stop the motor being left energised and
+  // forgotten, and it is 15 s. A seek at HOME_SEEK_VEL_RAD_S can legitimately
+  // need 125 s to cover HOME_MAX_TRAVEL_RAD, so without this the watchdog
+  // always wins and homing can never complete -- observed as the state machine
+  // dropping to idle after exactly 15 s, having found nothing.
+  //
+  // This does not weaken the watchdog: a seek is bounded by its own travel
+  // limit and ends on its own, and every other path still times out normally.
+  markEnergised();
   float travelled = shaftNow() - home_start;
 
   if (home_state == HOME_SEEK) {
@@ -769,6 +784,9 @@ void loop() {
           g_telem.target = shaftNow();
           markEnergised(); foc_running = true; motor.enable();
         }
+        break;
+      case 21:   // run the homing seek. Direction from the sign of nudge_rev.
+        homeStart(g_telem.nudge_rev < 0 ? -1.0f : 1.0f);
         break;
       case 20:   // persist the current correction table to flash
         g_telem.cal_saved = calSave() ? 1 : 0;

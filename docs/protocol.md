@@ -130,3 +130,13 @@ and leaves no arbitration headroom even at 1 Mbit/s.
 It is also unnecessary. These drives close their own position loop at several
 kHz. Send *moves*, or gear one axis to another, and the bus is nearly idle. The
 streaming model exists for dumb follower drives; this is not one.
+
+## Homing over SWD
+
+Command 21 runs the homing seek, taking its direction from the sign of
+`g_telem.nudge_rev`. Added because homing otherwise existed only as the UART
+`DH` command, which is unavailable on a board reached only through SWD.
+
+Verified on the ballscrew axis: sought 13 mm, found the sensor, backed off
+until it released, and parked 1.4 mm clear with `homed = 1` and the trip point
+recorded at −13.487 mm.

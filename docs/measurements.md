@@ -441,3 +441,40 @@ Remaining: completed moves still land ~0.5% short in the positive direction
 while the negative direction slightly overshoots, giving a drift of about
 0.01 rev per out-and-back cycle. That is proportional-controller steady-state
 error against detent torque. It needs an integral term, not more calibration.
+
+## Homing seeks stall intermittently (open)
+
+Homing completed once, cleanly: sought 13 mm, found the sensor, backed off until
+it released, parked 1.4 mm clear, `homed = 1`. It is not repeatable. Subsequent
+seeks cover a few millimetres and stop at an arbitrary position — −2.96 mm one
+run, −7.96 mm another, −5.76 mm a third.
+
+Ruled out by measurement:
+
+| Suspect | Evidence against |
+|---|---|
+| Drive watchdog | `drive_started` observed incrementing throughout; `home_state` stays `SEEK` |
+| Velocity mode itself | jog at 2 rad/s travels 3.70 mm fine |
+| Seek current | stalls identically at 800 and 1500 mA |
+| The state machine | `home_state`, `home_dir`, `home_vel` all correct during a stalled seek |
+
+What is left is the same intermittent stall measured at roughly 1 in 16 on
+point-to-point moves. A seek is one long continuous move, so it meets the
+problem nearly every time where a 5 mm positioning move usually does not.
+
+The common factor with every earlier stall is residual commutation error. The
+corrected table measures 23.8 electrical degrees peak, which is inside the
+±20–30° guideline but not far inside, and that measurement was taken free-shaft
+and statically. Under load and in motion the effective error is plausibly worse.
+
+### Two measurement traps hit while chasing this
+
+**Writing commands over SWD with the target halted.** A sequence of `mww`
+writes between one `halt` and one `resume` never executes — the firmware sees
+only the final value, once. Two separate velocity-mode tests "failed" this way
+and both conclusions were wrong. Interleave `resume` between writes.
+
+**`home_state` read after the test script's own cleanup.** The script ends with
+`allOff()`, which calls `homeCancel()` and sets the state to idle, so a state
+read afterwards reports idle regardless of how the seek ended. It made a stalled
+seek look like a cancelled one and sent the first diagnosis down the wrong path.

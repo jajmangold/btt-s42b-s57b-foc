@@ -201,7 +201,7 @@
 // finding anything. Still only a quarter of the motor's rating, and the real
 // protection against a missed trigger is HOME_MAX_TRAVEL_RAD bounding how far
 // it can go, not the current bounding how hard it pushes.
-#define HOME_SEEK_mA            800   // measured: this axis needs it to hold commanded speed
+#define HOME_SEEK_mA            800   // raising this does NOT fix seek stalls -- see docs/measurements.md
 #define HOME_MAX_TRAVEL_RAD     125.0f   // ~20 turns, then abort
 
 // Backing off is done BY SENSOR STATE, not by a guessed distance. A hall

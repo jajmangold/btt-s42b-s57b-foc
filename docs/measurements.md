@@ -518,3 +518,28 @@ After a hard reset, running purely from the flash-stored table: **3/3 homed,
 Note the counter-intuitive part: a *finer* 800-point sweep alone did not help
 (24.8° vs 23.8° at 400 points). More samples cannot fix a table being asked to
 represent a frequency above its own resolution. Filtering did.
+
+## Axis travel, ballscrew axis (2026-10-17)
+
+Measured from the home sensor trip point, by homing and then traversing out
+under closed-loop control:
+
+| | |
+|---|---|
+| home reference | sensor trip point, repeatable to 5 µm |
+| usable travel | **498.52 mm** |
+| screw | 1605, 5 mm lead |
+
+**The hard stop was never reached.** Travel was walked out in diminishing steps
+— 50, 25, 10, 5, 2, 1, 0.25, 0.21 mm — and every single step completed on
+target with no sign of load. 498.52 mm is a *declared* soft limit, not a
+measured mechanical end, and there is an unknown margin beyond it.
+
+That is the right way round. Finding a hard stop means driving into it, and on
+a ballscrew the thing that stops the carriage can be the nut leaving the end of
+the thread, which scatters the balls and scraps it.
+
+Traverse ran at 8 mm/s for the bulk of the distance and 1.6 mm/s for the final
+approach, at 700–800 mA, with no stalls anywhere — about 100 commanded moves in
+total. That is a useful secondary result: before the harmonic-filtered
+calibration this axis could not complete a single 4 mm move.

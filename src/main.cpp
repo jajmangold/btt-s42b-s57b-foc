@@ -77,6 +77,7 @@ struct Telem {
   uint32_t cal_done;        // non-zero once the open-loop sweep has filled
   uint32_t cal_saved;       // 1 = last calSave() wrote and verified
   uint32_t cal_active;      // 1 = correction is being applied to every read
+  float    nudge_vel;       // host-written traverse speed, rad/s. 0 = default.
 };
 volatile Telem g_telem __attribute__((used));
 
@@ -855,7 +856,16 @@ void loop() {
         if (rev == 0.0f) break;
         motor.controller    = MotionControlType::angle;
         jog_mode = gear_mode = step_mode = false;
-        setMotionLimits(NUDGE_VEL_RAD_S, AMPS(NUDGE_mA));
+        // Traverse speed and current are both host-settable, because
+        // positioning by hand near something fragile and crossing half a metre
+        // of empty axis want very different numbers. Both are clamped: the
+        // point of this command is that a bad value cannot launch the axis.
+        float v = g_telem.nudge_vel;
+        if (!(v == v) || v <= 0.0f) v = NUDGE_VEL_RAD_S;      // NaN or unset
+        if (v > NUDGE_MAX_VEL_RAD_S) v = NUDGE_MAX_VEL_RAD_S;
+        uint16_t ma = g_telem.set_mA ? g_telem.set_mA : NUDGE_mA;
+        if (ma > CURRENT_CEILING_mA) ma = CURRENT_CEILING_mA;
+        setMotionLimits(v, AMPS(ma));
         g_telem.target = shaftNow() + rev * _2PI;
         markEnergised(); foc_running = true; motor.enable();
         break;

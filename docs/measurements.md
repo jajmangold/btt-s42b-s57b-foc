@@ -543,3 +543,48 @@ Traverse ran at 8 mm/s for the bulk of the distance and 1.6 mm/s for the final
 approach, at 700–800 mA, with no stalls anywhere — about 100 commanded moves in
 total. That is a useful secondary result: before the harmonic-filtered
 calibration this axis could not complete a single 4 mm move.
+
+## Homing: two-stage seek, and a dispatch bug (2026-10-17)
+
+Trip detection costs HOME_DEBOUNCE_SAMPLES loop iterations, so the distance
+covered before the firmware notices scales with seek speed. A fast seek would
+throw away the repeatability that makes the reference worth having. Homing is
+therefore two-stage: HOME_FAST finds the sensor, HOME_RETREAT backs clear,
+HOME_SEEK re-approaches slowly and records the reference.
+
+A stall watchdog (HOME_STALL_RAD / HOME_STALL_MS) aborts any seek that stops
+making progress. That, not HOME_MAX_TRAVEL_RAD, is what bounds the force a
+missed trigger applies — the travel limit only stops it eventually, after
+pushing for the rest of the budget.
+
+### The dispatch bug
+
+Adding stages exposed one worth remembering. The main loop decides whether
+homing owns the motor with a single condition:
+
+```c
+bool homing = (home_state == HOME_SEEK || home_state == HOME_BACKOFF);
+```
+
+The new stages were not added to it. During HOME_FAST that test was false, so
+the loop fell through to `motor.move(g_telem.target)` — a **stale position
+target from whatever ran last** — and drove to it at full authority. Observed
+as a seek running away 88 mm in the wrong direction at 24 mm/s against an
+8 mm/s command, and as erratic behaviour between runs, because the destination
+depended on whatever target happened to be left over.
+
+It read exactly like a velocity-loop instability, and was diagnosed as one
+twice before the real cause was found. Every state that commands motion must
+appear in that condition.
+
+### Two SWD measurement traps, both of which produced confident wrong answers
+
+**Writing a command sequence with the target halted.** A run of `mww` writes
+between one `halt` and one `resume` never executes — the firmware resumes, sees
+only the final value, and acts on it once. Two separate tests "proved" velocity
+mode was broken this way. Interleave `resume` between writes.
+
+**Reading state after a test script's own cleanup.** Scripts end with
+`allOff()`, which calls `homeCancel()` and sets the state to idle. A state read
+afterwards reports idle no matter how the seek actually ended, which made a
+stalled seek look like a cancelled one.

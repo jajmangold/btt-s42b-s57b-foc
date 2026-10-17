@@ -478,3 +478,43 @@ and both conclusions were wrong. Interleave `resume` between writes.
 `allOff()`, which calls `homeCancel()` and sets the state to idle, so a state
 read afterwards reports idle regardless of how the seek ended. It made a stalled
 seek look like a cancelled one and sent the first diagnosis down the wrong path.
+
+## Resolved: filter the calibration to low-order harmonics
+
+Homing seeks stalled about half the time with a table built from the raw sweep
+residual. The cause was the table correcting something it cannot represent.
+
+Encoder angle error is **low-order** — a few cycles per mechanical revolution,
+from magnet eccentricity and tilt. Detent torque is not: it repeats once per
+full step, **200x per revolution, every 164 counts**. An open-loop park settles
+where detent allows rather than where the field points, so the sweep measures
+both.
+
+A 256-bucket table spans 128 counts per bucket and cannot represent a 164-count
+period at all. Feeding it the raw residual aliased the detent component into
+the table and corrupted the correction everywhere — not just near the detent.
+And detent is not an encoder error, so correcting it means fighting the motor's
+own magnetic preference.
+
+Fitting 10 harmonics and discarding the rest separates them cleanly:
+
+| component | peak | rms |
+|---|---|---|
+| total measured | 128.4 elec° | 65.6 |
+| encoder, correctable | 119.1 | 65.3 |
+| detent + noise, discarded | **17.3** | **6.4** |
+
+That discarded 17.3° is the floor this method can reach, and the corrected
+result lands right on it:
+
+| | corrected peak | homing | repeatability |
+|---|---|---|---|
+| raw residual table | 24.8 elec° | **3 / 6** | — |
+| harmonic-filtered | **17.7 elec°** | **6 / 6** | 16 µm spread, 5 µm sd |
+
+After a hard reset, running purely from the flash-stored table: **3/3 homed,
+5 µm spread.**
+
+Note the counter-intuitive part: a *finer* 800-point sweep alone did not help
+(24.8° vs 23.8° at 400 points). More samples cannot fix a table being asked to
+represent a frequency above its own resolution. Filtering did.

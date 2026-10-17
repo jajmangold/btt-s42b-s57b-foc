@@ -18,7 +18,7 @@ import os, re, struct, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import nudge
 
-N_SWEEP  = 400
+N_SWEEP  = 800
 BUCKETS  = 256
 SHIFT    = 7
 FULL     = 32768
@@ -77,6 +77,35 @@ def residuals(v):
     return [un[i] - (m*i + b) for i in range(n)], m, b
 
 
+def harmonics(res, orders=10):
+    """Keep only the low-order content of the residual.
+
+    Encoder angle error is low-order: a handful of cycles per MECHANICAL
+    revolution, dominated by magnet eccentricity and tilt. Detent torque is
+    not -- it repeats once per full step, 200x per revolution, every 164
+    counts. The sweep measures both, because an open-loop park settles where
+    detent allows rather than where the field points.
+
+    A 256-bucket table spans 128 counts per bucket and cannot represent a
+    164-count period at all, so feeding it the raw residual aliases the detent
+    component into nonsense. Worse, detent is not an encoder error and must not
+    be corrected: doing so fights the motor's own magnetic preference.
+
+    Fitting a few harmonics keeps the part that is genuinely encoder error and
+    discards the rest.
+    """
+    import math
+    n = len(res)
+    out = [0.0]*n
+    out = [sum(res)/n]*n
+    for h in range(1, orders+1):
+        c = sum(res[i]*math.cos(2*math.pi*h*i/n) for i in range(n)) * 2.0/n
+        sN = sum(res[i]*math.sin(2*math.pi*h*i/n) for i in range(n)) * 2.0/n
+        for i in range(n):
+            out[i] += c*math.cos(2*math.pi*h*i/n) + sN*math.sin(2*math.pi*h*i/n)
+    return out
+
+
 def report(res, label):
     pk = max(res, key=abs); n = len(res)
     rms = (sum(r*r for r in res)/n) ** 0.5
@@ -123,8 +152,14 @@ def main():
         if what == "sweep":
             return 0
 
-        # correction, indexed by raw reading: counts to ADD to cancel the error
-        pts = sorted(((v[k] & 0x7FFF, -res[k]) for k in range(len(v))), key=lambda t: t[0])
+        # Keep only low-order content: that is the encoder error. What is left
+        # is detent and noise, which the table cannot represent and must not
+        # try to correct.
+        smooth = harmonics(res, orders=10)
+        resid_after = [res[i]-smooth[i] for i in range(len(res))]
+        report(smooth, "ENCODER (low-order)")
+        report(resid_after, "DISCARDED (detent+noise)")
+        pts = sorted(((v[k] & 0x7FFF, -smooth[k]) for k in range(len(v))), key=lambda t: t[0])
         table = []
         for bkt in range(BUCKETS):
             centre = bkt * (FULL // BUCKETS) + (FULL // BUCKETS) // 2
@@ -175,7 +210,7 @@ def main():
     if what == "verify":
         print("  re-sweeping with correction ON...")
         v = do_sweep(S, enable=True)
-        # leave it enabled
+        open("cal_verify.txt", "w").write("\n".join(map(str, v)))
         nudge.ocd(["halt", "mwb 0x%08X 1" % S["tle_cal_enable"][0], "resume"])
         res, m, b = residuals(v)
         left = report(res, "CORRECTED")

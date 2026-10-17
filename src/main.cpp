@@ -301,7 +301,11 @@ static int32_t parkAndRead(float ua, float ub, uint32_t settle_ms) {
 
 // Open-loop sweep buffer (diagnostic, command 19). 200 full steps is one
 // mechanical revolution on a 1.8 deg/step motor.
-static const uint16_t CAL_STEPS     = 400;   // 0.9 deg of field per step
+// 800 points over one mechanical revolution: 0.45 deg of field per step, and
+// bidirectionally that is ~6 samples per correction bucket rather than ~3. The
+// limit on this table is measurement noise, not bucket count, so spending the
+// RAM on more samples per bucket beats spending it on more buckets.
+static const uint16_t CAL_STEPS     = 800;
 static const uint32_t CAL_SETTLE_MS = 60;
 // volatile, and deliberately so: nothing in the firmware ever reads this back,
 // so without it the compiler correctly proves the stores are dead and removes

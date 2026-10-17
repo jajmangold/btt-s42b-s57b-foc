@@ -417,3 +417,27 @@ mechanism. The closure-constrained fit was the actual fix.
 consistently and in both directions. That is steady-state error in a
 proportional angle controller against detent torque, not a calibration defect,
 and it will not integrate away without an I term.
+
+### Resolved
+
+Recalibrated on a fully decoupled shaft:
+
+| | peak | rms |
+|---|---|---|
+| uncorrected | 123.7 elec° | 65.4 elec° |
+| corrected | **23.8 elec°** | **6.2 elec°** |
+
+**16 of 16** closed-loop moves completed, mean error 1.68° on a full
+revolution; **8 of 8** after a hard reset on the flash-stored table alone.
+
+Decoupling made no measurable difference, which settles an open question in the
+section above. Against the partially-coupled run: hysteresis 30.0 → 31.4
+counts, uncorrected peak 124.0 → 123.7, rms 66.1 → 65.4. The load was never
+corrupting the sweep. The hysteresis is magnetic detent in the motor, and the
+closure-constrained fit was the entire fix — the earlier advice to decouple was
+based on a theory the data does not support.
+
+Remaining: completed moves still land ~0.5% short in the positive direction
+while the negative direction slightly overshoots, giving a drift of about
+0.01 rev per out-and-back cycle. That is proportional-controller steady-state
+error against detent torque. It needs an integral term, not more calibration.

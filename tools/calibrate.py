@@ -150,6 +150,24 @@ def main():
     what = sys.argv[1] if len(sys.argv) > 1 else "sweep"
     S = syms()
 
+    if what == "measure":
+        # Sweep and report WITHOUT uploading anything. Calibration is
+        # conditional: a board whose low-order error is already inside the
+        # FOC requirement gets worse from a table fitted to its noise.
+        print("  sweeping, correction OFF -- reporting only, nothing uploaded\n")
+        v = do_sweep(S, enable=False)
+        res, m, b = residuals(v)
+        report(res, "TOTAL measured")
+        smooth = harmonics(res, orders=10)
+        lo = report(smooth, "ENCODER low-order")
+        report([res[i]-smooth[i] for i in range(len(res))], "detent + noise")
+        print()
+        print("  The ENCODER low-order peak is what a table can remove.")
+        print("  FOC needs roughly +/-20-30 electrical degrees.")
+        print("  VERDICT: %s" % ("CALIBRATION NEEDED" if lo > 30 else
+                                 "no calibration needed -- a table would fit noise"))
+        return 0
+
     if what in ("sweep", "apply"):
         print("  sweeping with correction OFF (one open-loop revolution)...")
         v = do_sweep(S, enable=False)

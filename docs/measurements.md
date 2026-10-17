@@ -626,3 +626,28 @@ needs far more torque than parking it at a few static positions. At 800 mA —
 fine for board 2's 2.8 A motor — this 4 A motor simply buzzed in its detent
 while the field rotated past, recording a *stationary* motor across all 1600
 samples. It looks and sounds like movement. 2500 mA turns it. `CAL_mA` sets it.
+
+## When calibration actually helps: four boards measured
+
+`tools/calibrate.py measure` sweeps and reports without uploading anything,
+because a table can hurt as easily as help.
+
+| board | low-order error | detent+noise | calibrated? | result |
+|---|---|---|---|---|
+| 2 | **119 elec°** | 17 | **yes** | could not move 4 mm uncalibrated; 16/16 and 0.3 µm homing after |
+| 3 | 15.7 | 46 | no | 0.42° uncorrected vs 0.79° with a table |
+| 4 | 25.7 | 7.9 | no | 0.49° uncorrected vs 0.51° with a table |
+
+Board 4 is the instructive one. Its low-order error sits at 25.7° with a 3:1
+signal-to-noise ratio, so a table had something real to remove — and removing
+it changed nothing measurable. Closed-loop positioning simply tolerates that
+much commutation error.
+
+So the ±20–30° figure is conservative as a *calibration* trigger. The failure
+cliff is far higher: 119° is catastrophic, 25.7° is invisible. Between those we
+have no data.
+
+**The rule is to measure the outcome, not the sweep.** Run `measure`, and if it
+is anywhere near the line, compare closed-loop moves with and without before
+storing anything. A stored table loads at every boot, so a bad one is a
+permanent, silent handicap.

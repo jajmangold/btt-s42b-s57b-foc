@@ -393,3 +393,27 @@ and friction, which varies with position and direction — so the sweep measures
 the mechanism as much as the encoder. The correction table is a property of the
 magnet, rotor and sensor alone, so it should be measured with the motor
 **decoupled and unloaded**, then used once re-coupled.
+
+### First table that passes
+
+With the closure-constrained fit and the motor mostly decoupled from the screw:
+
+| | peak | rms |
+|---|---|---|
+| uncorrected | 124.0 elec° | 66.1 elec° |
+| corrected | **22.3 elec°** | **3.8 elec°** |
+
+First sweep to land inside the ±20–30° FOC needs. Closed-loop moves: **11 of 12**
+on a free shaft, and **5 of 6** after a hard reset using only the flash-stored
+table with no host involvement.
+
+Two corrections to earlier reasoning in this document, both worth keeping:
+
+**Decoupling was not what fixed it.** Hysteresis barely changed, 30.0 → 27.4
+counts, so it is magnetic detent in the motor rather than friction in the
+mechanism. The closure-constrained fit was the actual fix.
+
+**Completed moves land ~0.7% short** (0.993 rev for 1.000 commanded),
+consistently and in both directions. That is steady-state error in a
+proportional angle controller against detent torque, not a calibration defect,
+and it will not integrate away without an I term.

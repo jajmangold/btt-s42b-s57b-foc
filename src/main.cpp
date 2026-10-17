@@ -787,6 +787,12 @@ void setup() {
   Serial.print(F("SYSCLK ")); Serial.print(g_telem.sysclk_hz / 1000000);
   Serial.println(g_telem.clock_ok ? F(" MHz (crystal)") : F(" MHz -- HSE FAILED, CAN/UART rates affected"));
 
+  // Apply the power-up current before anything can command motion.
+  g_telem.set_mA = DEFAULT_RUN_mA;
+  Serial.print(F("run current ")); Serial.print(DEFAULT_RUN_mA);
+  Serial.print(F(" mA (ceiling ")); Serial.print(CURRENT_CEILING_mA);
+  Serial.println(F(" mA)"));
+
   g_telem.magic = 0x53354237;
 }
 

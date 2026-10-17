@@ -65,6 +65,21 @@
 // Conservative starting current for bring-up. Raise deliberately, not by habit.
 #define BRINGUP_mA              (FACTORY_DEFAULT_mA / 2)
 
+// Current applied at power-up, before any host sets one.
+//
+// set_mA lives in RAM and resets to 0 every power cycle, so without this the
+// drive falls back to BRINGUP_mA and a machine that was commissioned at full
+// current quietly comes back at a quarter of it -- which shows up as mystery
+// stalls under load rather than as anything obviously current-related.
+//
+// Set to the board ceiling by request. Worth knowing what that costs: this is
+// the current the motor holds position at while standing still, and standstill
+// is where stepper heat accumulates. Plenty of machines run well below their
+// driver maximum for exactly that reason. Lower this if the motors run hot.
+#ifndef DEFAULT_RUN_mA
+#define DEFAULT_RUN_mA          CURRENT_CEILING_mA
+#endif
+
 // ---------------------------------------------------------------------------
 //  Encoder: Infineon TLE5012B on SPI1, 3-wire HALF-DUPLEX SSC
 // ---------------------------------------------------------------------------

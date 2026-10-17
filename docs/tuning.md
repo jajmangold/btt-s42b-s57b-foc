@@ -118,3 +118,34 @@ has roughly 25% of rated torque. Two consequences worth planning around:
   a prediction of behaviour under load.
 - The driver, not the motor, is usually the binding limit. A 4 A motor on an
   S57B is capped at 3.3 A; the same motor on an S42B is capped at 1.65 A.
+
+## Angle loop: integral term, and why it is banded
+
+The angle loop was proportional only. That cannot hold position against detent
+torque — a stepper rotor sits in a magnetic notch and a P controller settles
+wherever `P * error` produces just enough velocity command to balance it.
+
+Measured on the ballscrew axis, 16 alternating one-revolution moves:
+
+| | mean \|error\| | per move | drift over 8 out-and-back cycles |
+|---|---|---|---|
+| P only | 0.0047 rev | 1.68° | **−0.08 rev** |
+| P + I, always active | 0.0268 rev | 9.65° | −0.0003 rev |
+| **P + I, banded** | **0.0019 rev** | **0.68°** | **−0.0003 rev** |
+
+An always-active integral kills the drift and makes every individual move far
+worse. During a one-revolution traverse the error is ~6 rad for several
+seconds, so the integrator pins itself at its clamp and then has to discharge
+by carrying the axis *past* the target — a steady 0.027 rev of overshoot.
+Anti-windup clamping cannot help, because the clamp is the thing that saturated.
+
+Integrating only within `ANGLE_I_BAND_RAD` of the target leaves the traverse
+purely proportional and lets the integral do the single job it is wanted for:
+breaking detent at the end of the move. That recovers the drift fix *and*
+improves per-move accuracy 2.5× over P-only.
+
+`setMotionLimits()` exists for a related trap. `P_angle`'s output **is** the
+velocity setpoint, so its clamp must track `velocity_limit`. SimpleFOC sets
+`P_angle.limit` from `velocity_limit` once, inside `init()`; changing
+`velocity_limit` at runtime afterwards leaves the clamp behind. Harmless with a
+P-only loop, a windup bug the moment an integral exists.

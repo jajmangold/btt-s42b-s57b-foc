@@ -121,6 +121,28 @@ static void markEnergised();      // defined below
 // next enable would quietly resume seeking.
 static void homeCancel();
 
+// Set the motion limits together, because they are not independent.
+//
+// P_angle's output IS the velocity setpoint, so its clamp must match
+// velocity_limit. SimpleFOC sets P_angle.limit from velocity_limit once, in
+// init(); changing velocity_limit later leaves the clamp behind. With an
+// integral term that is a windup bug waiting to happen -- the integrator would
+// be free to accumulate toward the stale, larger limit while the actual
+// command is held at the smaller one, and every move would end with a wound-up
+// integrator discharging into the next.
+//
+// The integral is also reset here. Carrying accumulated error from a finished
+// move into a fresh one makes the axis lurch at the start of the new move,
+// which on a machine tool is a surprise with a cutter attached.
+static void setMotionLimits(float vel_rad_s, float amps) {
+  motor.velocity_limit  = vel_rad_s;
+  motor.P_angle.limit   = vel_rad_s;
+  motor.voltage_limit   = amps;
+  motor.PID_velocity.limit = amps;
+  motor.P_angle.reset();
+  motor.PID_velocity.reset();
+}
+
 static void allOff() {
   motor.disable();
   driver.setPwm(0, 0);
@@ -651,7 +673,8 @@ void setup() {
   // 6 counts of jitter differentiated at ~14 kHz is +-1.4 rad/s of phantom
   // velocity on a stationary shaft. Filter it or the velocity loop chases noise.
   motor.LPF_velocity.Tf = 0.02f;
-  motor.P_angle.P       = 8.0f;
+  motor.P_angle.P       = ANGLE_PID_P;
+  motor.P_angle.I       = ANGLE_PID_I;
   motor.PID_velocity.P  = 0.05f;
   motor.PID_velocity.I  = 1.0f;
   motor.PID_velocity.D  = 0.0f;
@@ -810,8 +833,7 @@ void loop() {
         if (rev == 0.0f) break;
         motor.controller    = MotionControlType::angle;
         jog_mode = gear_mode = step_mode = false;
-        motor.voltage_limit = AMPS(NUDGE_mA);
-        motor.velocity_limit = NUDGE_VEL_RAD_S;              // gentle, not the default 20
+        setMotionLimits(NUDGE_VEL_RAD_S, AMPS(NUDGE_mA));
         g_telem.target = shaftNow() + rev * _2PI;
         markEnergised(); foc_running = true; motor.enable();
         break;
@@ -907,6 +929,12 @@ void loop() {
   homeUpdate();
 
   if (foc_running) {
+    // Conditional integration: the angle integral is enabled only close to the
+    // target. See ANGLE_I_BAND_RAD in config.h for why.
+    if (motor.controller == MotionControlType::angle) {
+      float err = fabsf(g_telem.target - shaftNow());
+      motor.P_angle.I = (err < ANGLE_I_BAND_RAD) ? ANGLE_PID_I : 0.0f;
+    }
     motor.loopFOC();
     bool homing = (home_state == HOME_SEEK || home_state == HOME_BACKOFF);
     if (homing)         motor.move(home_vel);

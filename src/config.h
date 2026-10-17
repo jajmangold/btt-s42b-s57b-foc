@@ -209,6 +209,33 @@
 #define HOME_BACKOFF_EXTRA_RAD  1.3f     // past the release point (~1 mm at 5 mm lead)
 #define HOME_BACKOFF_MAX_RAD    12.0f    // ~9.5 mm at 5 mm lead, then abort
 
+// ---------------------------------------------------------------------------
+//  Angle loop gains
+// ---------------------------------------------------------------------------
+// The angle loop was proportional only, which cannot hold position against
+// detent torque: a stepper's rotor sits in a magnetic notch, and a P
+// controller settles wherever P * error produces just enough velocity command
+// to balance it. Measured on the ballscrew axis, that left moves landing about
+// 0.5 % short in one direction and slightly over in the other -- roughly
+// 0.01 rev of drift per out-and-back cycle. Harmless for jogging, but it
+// accumulates over a gear-cutting run, which is exactly where it must not.
+//
+// The integral term removes it by building command until the notch gives way.
+// Keep it modest: too much and the axis hunts across the detent instead of
+// settling in it.
+#define ANGLE_PID_P             8.0f
+#define ANGLE_PID_I             4.0f
+
+// The integral acts ONLY within this band of the target. Outside it, the error
+// is whatever distance is left to travel -- seconds of it -- and integrating
+// that just saturates the integrator at its clamp, which then has to discharge
+// by driving PAST the target. Measured: with the integral always active, drift
+// per cycle fell to nothing but every move overshot by a steady 0.027 rev.
+// Clamping cannot fix that, because the clamp is the thing that saturated.
+// Integrating only near the target leaves the traverse purely proportional and
+// lets the integral do the one job it is here for: break detent at the end.
+#define ANGLE_I_BAND_RAD        0.15f
+
 // Bounded manual nudge (SWD command 16). Deliberately small, slow and weak:
 // this exists for positioning a gantry by hand near something it could hit,
 // which is the opposite of a situation wanting speed or torque.

@@ -588,3 +588,41 @@ mode was broken this way. Interleave `resume` between writes.
 `allOff()`, which calls `homeCancel()` and sets the state to idle. A state read
 afterwards reports idle no matter how the seek actually ended, which made a
 stalled seek look like a cancelled one.
+
+## Not every board needs calibration (board 3, 2026-10-17)
+
+A third board with a fresh 4 A motor and magnet measured:
+
+| | peak | rms |
+|---|---|---|
+| uncorrected | 46.7 elec° | 9.9 |
+| encoder, low-order (correctable) | **15.7** | 7.8 |
+| detent + noise (discarded) | 46.0 | 6.2 |
+| **after applying the table** | **55.8** | 13.6 |
+
+The correction made it **worse**, and closed-loop moves confirmed it: 0.79° mean
+error with the table against **0.42° without**.
+
+The reason is that there was nothing worth correcting. This encoder's genuine
+low-order error is 15.7 electrical degrees, already inside what FOC needs,
+against 119° on board 2. What remains is detent and measurement noise —
+hysteresis alone was 22.6 counts — so the table fits noise and adds it back.
+
+**So calibration is conditional, not routine.** Compare the *low-order* figure
+against the ±20–30° requirement before deciding:
+
+* board 2: 119 elec° — could not complete a single 4 mm move uncalibrated.
+  Calibration took it to 16/16 and 0.3 µm homing repeatability.
+* board 3: 15.7 elec° — 10/10 moves at 0.70° from cold with no table at all.
+
+Nothing is stored in this board's flash, deliberately. A saved table loads
+automatically at every boot, so writing one here would have made the board
+permanently worse with no obvious cause.
+
+### Sweep current scales with the motor
+
+The rotor must be dragged through 50 continuous electrical revolutions, which
+needs far more torque than parking it at a few static positions. At 800 mA —
+fine for board 2's 2.8 A motor — this 4 A motor simply buzzed in its detent
+while the field rotated past, recording a *stationary* motor across all 1600
+samples. It looks and sounds like movement. 2500 mA turns it. `CAL_mA` sets it.

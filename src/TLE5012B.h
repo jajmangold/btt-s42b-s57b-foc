@@ -21,6 +21,10 @@
 // SSC command words (from BTT mydef.h, standard TLE5012B encoding:
 // bit15 RW=1 read, bits 9:4 register address, bits 3:0 word count).
 static const uint16_t TLE_CMD_READ_STATUS = 0x8001;  // STAT, 1 word
+// Write command: RW=0, same address field. Writing STAT clears its latched
+// error flags -- reading alone does not, which is why a power-on system-error
+// flag can persist for the life of the session.
+static const uint16_t TLE_CMD_WRITE_STATUS = 0x0001;
 static const uint16_t TLE_CMD_READ_ANGLE  = 0x8021;  // AVAL, 1 word
 static const uint16_t TLE_CMD_READ_SPEED  = 0x8031;  // ASPD, 1 word
 
@@ -65,6 +69,14 @@ class TLE5012B : public Sensor {
   // --- Raw access / diagnostics ---
   uint16_t readRaw();       // 15-bit angle, 0..32767, one turn
   uint16_t readStatus();    // STAT register
+
+  // Clear STAT's latched error flags. The safety word's SYS_ERR bit mirrors
+  // them, and this firmware rejects any read whose safety word reports an
+  // error -- so a latched power-on flag means every angle is discarded and
+  // getSensorAngle() returns the same held value forever. Observed on a board
+  // whose safety word read 0xBE36: SYS_ERR low, but the angle flagged VALID
+  // and the CRC correct. Call once at init, after the bus is up.
+  void     clearStatus();
   int16_t  readSpeed();     // ASPD register, signed
 
   // Link health. NOTE: there is deliberately NO per-read value check -- a
@@ -82,7 +94,35 @@ class TLE5012B : public Sensor {
   bool readSafe(uint16_t cmd, uint16_t* data, uint16_t* safety);
 
   // Safety-word status bits are ACTIVE LOW on this part: 1 = healthy.
-  static bool statusOk(uint16_t safety) { return (safety & 0xF000) == 0xF000; }
+  //
+  //   bit 15  STAT_RES  sensor reset / status not yet read
+  //   bit 14  SYS_ERR   internal system error
+  //   bit 13  IF_ERR    interface access error
+  //   bit 12  INV_ANG   angle value invalid
+  //
+  // Only the lower two speak to whether THIS ANGLE is trustworthy. The upper
+  // two are latched condition flags, and that distinction matters: this
+  // originally demanded all four, which meant a single latched SYS_ERR
+  // discarded every angle for the life of the session with no way to clear it.
+  // Writing STAT does not clear it. A board was measured reading 0xBE36 --
+  // SYS_ERR low, but CRC correct, interface fine, and the sensor itself
+  // flagging the angle VALID, while the encoder tracked 302 degrees of hand
+  // rotation perfectly. The firmware was throwing away good data and the drive
+  // looked mechanically dead.
+  //
+  // A latched flag that permanently disables a drive whose data is sound is a
+  // worse failure than the one it guards against. CRC still catches corruption
+  // and INV_ANG still catches angles the sensor itself distrusts; SYS_ERR is
+  // counted and reported instead of acted on.
+  static bool statusOk(uint16_t safety) { return (safety & 0x3000) == 0x3000; }
+  static bool systemWarn(uint16_t safety) { return (safety & 0x4000) == 0; }
+
+  uint32_t sysWarns() const { return sys_warns_; }
+
+  // The last safety word actually received. Without this, a read rejected by
+  // statusOk() is indistinguishable from any other -- the angle is simply held
+  // and nothing says why. That cost a wrong diagnosis on board 3.
+  uint16_t lastSafety() const { return last_safety_; }
   uint16_t lastStat() const { return last_stat_; }
   uint16_t lastRaw()  const { return last_raw_; }   // no bus traffic
   void     resetStats() { link_fails_ = 0; }
@@ -97,5 +137,7 @@ class TLE5012B : public Sensor {
   uint32_t   crc_fails_ = 0;
   uint32_t   status_fails_ = 0;
   uint16_t   last_stat_ = 0;
+  uint16_t   last_safety_ = 0;
+  uint32_t   sys_warns_ = 0;
   uint16_t   last_raw_ = 0;
 };

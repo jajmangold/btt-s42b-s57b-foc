@@ -16,7 +16,12 @@ import os, re, struct, subprocess, sys
 
 OCD = r"C:\Users\Josh\.platformio\packages\tool-openocd"
 NM  = r"C:\Users\Josh\.platformio\packages\toolchain-gccarmnoneeabi\bin\arm-none-eabi-nm.exe"
-ELF = os.path.join(os.path.dirname(__file__), "..", ".pio", "build", "axis_ballscrew", "firmware.elf")
+# Which build to resolve symbols against. There is more than one board now,
+# and they do not run the same binary -- symbol addresses differ between
+# builds, so pointing this at the wrong one yields plausible nonsense.
+#   set S57B_ENV=s57b   (or axis_ballscrew, s42b, ...)
+ENV = os.environ.get("S57B_ENV", "axis_ballscrew")
+ELF = os.path.join(os.path.dirname(__file__), "..", ".pio", "build", ENV, "firmware.elf")
 
 LEAD_MM   = 5.0      # 1605 ballscrew; must match AXIS_LEAD_MM in config.h
 CMD_NUDGE = 16
@@ -45,7 +50,7 @@ TELEM = [
     ("home_raw","I"), ("home_trig","I"), ("home_state","I"), ("homed","I"),
     ("home_angle","f"),
     ("sysclk_hz","I"), ("clock_ok","I"),
-    ("nudge_rev","f"), ("cal_done","I"), ("cal_saved","I"), ("cal_active","I"), ("nudge_vel","f"),
+    ("nudge_rev","f"), ("cal_done","I"), ("cal_saved","I"), ("cal_active","I"), ("nudge_vel","f"), ("safety","I"),
 ]
 
 def _offsets():

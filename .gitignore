@@ -7,3 +7,6 @@
 secrets.h
 **/secrets.h
 cal_sweep.txt
+__pycache__/
+*.pyc
+cal_verify.txt

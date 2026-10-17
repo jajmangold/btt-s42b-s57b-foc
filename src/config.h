@@ -205,17 +205,38 @@
 #define HOME_SENSOR_ACTIVE_LOW  1
 #define HOME_DEBOUNCE_SAMPLES   4     // consecutive agreeing reads to accept
 
-// Homing motion. Slow and weak deliberately: this is the one operation that
-// drives on purpose towards something solid. Force scales with current, so the
-// seek current is what decides whether a missed trigger dents a bearing race
-// or bends a bracket.
-#define HOME_SEEK_VEL_RAD_S     1.0f
-// Raised from 400 after calibration: at 400 mA this axis would not reliably
-// move its gantry at all, so a seek could fail by stalling rather than by
-// finding anything. Still only a quarter of the motor's rating, and the real
-// protection against a missed trigger is HOME_MAX_TRAVEL_RAD bounding how far
-// it can go, not the current bounding how hard it pushes.
-#define HOME_SEEK_mA            800   // raising this does NOT fix seek stalls -- see docs/measurements.md
+// TWO-STAGE HOMING. The trip is detected after HOME_DEBOUNCE_SAMPLES loop
+// iterations, so the distance covered before the firmware notices scales
+// directly with seek speed. Seeking fast enough to be convenient would throw
+// away the repeatability that makes the reference worth having -- measured at
+// 0.3 um across a full 500 mm round trip at the slow speed.
+//
+// So a fast stage finds the sensor, the axis backs off clear of it, and a slow
+// stage re-approaches to establish the reference. Fast where it only has to
+// cover ground, slow where the measurement is actually made.
+#define HOME_FAST_VEL_RAD_S     10.0f   // ~8 mm/s, coarse search
+#define HOME_SEEK_VEL_RAD_S     1.0f    // ~0.8 mm/s, measuring approach
+#define HOME_RESEEK_BACKOFF_RAD 6.0f    // ~4.8 mm clear before the slow stage
+
+// Full motor current. This is only safe because of HOME_STALL_MS below.
+//
+// Previously the sole protection against a failed sensor was the travel bound,
+// which means pushing into a hard stop for the remaining 99 mm -- at 2.8 A that
+// is roughly 220 kgf at the screw, easily enough to brinell a bearing race or
+// drive the ball nut off the end of the thread. Aborting on a stall bounds the
+// push to a fraction of a second instead, which is what makes the current safe
+// rather than the current being low.
+// Back to 800. Full current made it worse, not better: more authority handed
+// to a velocity loop that is already struggling with a step command. This is
+// the value 6-of-6 homing and the 0.3 um round-trip reference were measured at.
+#define HOME_SEEK_mA            800
+
+// A seek that stops making progress has met something. Abort rather than keep
+// pushing. This, not HOME_MAX_TRAVEL_RAD, is what bounds the force a missed
+// trigger can apply.
+#define HOME_STALL_RAD          0.05f   // less movement than this counts as stopped
+#define HOME_STALL_MS           250     // ...for this long, and the seek aborts
+
 #define HOME_MAX_TRAVEL_RAD     125.0f   // ~20 turns, then abort
 
 // Backing off is done BY SENSOR STATE, not by a guessed distance. A hall

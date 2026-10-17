@@ -71,6 +71,16 @@ uint16_t TLE5012B::readStatus() {
   return v;
 }
 
+void TLE5012B::clearStatus() {
+  spi_->beginTransaction(settings_);
+  digitalWrite(cs_, LOW);
+  transfer(TLE_CMD_WRITE_STATUS);
+  transfer(0x0000);               // all flags cleared
+  digitalWrite(cs_, HIGH);
+  spi_->endTransaction();
+  // MOSI stays driven: a write never hands the line to the sensor.
+}
+
 int16_t TLE5012B::readSpeed() {
   spi_->beginTransaction(settings_);
   digitalWrite(cs_, LOW);
@@ -124,6 +134,8 @@ float TLE5012B::getSensorAngle() {
   // a value we cannot vouch for.
   uint16_t d, sw;
   if (!readSafe(TLE_CMD_READ_ANGLE, &d, &sw)) { link_fails_++;   return angle_prev; }
+  last_safety_ = sw;
+  if (systemWarn(sw)) sys_warns_++;   // reported, not acted on -- see the header
   if (!statusOk(sw))                          { status_fails_++; return angle_prev; }
   if ((uint8_t)(sw & 0xFF) != tle_crc(TLE_CMD_READ_ANGLE, d)) {
     crc_fails_++;

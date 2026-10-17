@@ -118,8 +118,15 @@ def report(res, label):
 
 def do_sweep(S, enable):
     base = nudge.sym("g_telem")
+    # Sweep current. The rotor has to be DRAGGED through 50 continuous
+    # electrical revolutions, which needs far more torque than parking it at a
+    # few static positions. Too little and it simply buzzes in its detent while
+    # the field rotates past -- which looks and sounds like movement but
+    # records zero net rotation, and yields a table built from a stationary
+    # motor. Bigger motors need more:  set CAL_mA for a 4 A motor.
+    cal_ma = int(os.environ.get("CAL_mA", "800"))
     nudge.ocd(["halt", "mwb 0x%08X %d" % (S["tle_cal_enable"][0], 1 if enable else 0),
-               "mww 0x%08X 800" % (base + nudge.OFF["set_mA"]), "resume"])
+               "mww 0x%08X %d" % (base + nudge.OFF["set_mA"], cal_ma), "resume"])
     C = base + nudge.OFF["cmd"]
     nudge.ocd(["halt", "mww 0x%08X 0" % C, "resume", "halt", "mww 0x%08X 19" % C, "resume"])
     time.sleep(N_SWEEP * 2 * 0.06 + 10)

@@ -78,6 +78,7 @@ struct Telem {
   uint32_t cal_saved;       // 1 = last calSave() wrote and verified
   uint32_t cal_active;      // 1 = correction is being applied to every read
   float    nudge_vel;       // host-written traverse speed, rad/s. 0 = default.
+  uint32_t safety;          // last TLE5012B safety word, for diagnosing rejects
 };
 volatile Telem g_telem __attribute__((used));
 
@@ -427,7 +428,11 @@ static void onMotor(char* cmd) { command.motor(&motor, cmd); }
 // for the motor to stay under control, so a seek that blocked inside a command
 // handler would stall the very control loop holding the axis.
 
-enum : uint8_t { HOME_IDLE = 0, HOME_SEEK, HOME_BACKOFF, HOME_DONE, HOME_FAIL };
+// Stages: FAST finds the sensor quickly, RETREAT backs clear of it, SEEK
+// re-approaches slowly and is the one that records the reference, BACKOFF
+// parks clear so the next home can start.
+enum : uint8_t { HOME_IDLE = 0, HOME_SEEK, HOME_BACKOFF, HOME_DONE, HOME_FAIL,
+                 HOME_FAST, HOME_RETREAT };
 
 static uint8_t home_state  = HOME_IDLE;
 static float   home_start  = 0.0f;    // shaft angle when the seek began
@@ -435,6 +440,8 @@ static float   home_dir    = 1.0f;    // +1 or -1
 static float   home_vel    = 0.0f;    // commanded seek velocity, rad/s
 static bool    home_released = false; // sensor let go during backoff
 static float   home_rel_ang  = 0.0f;  // shaft angle at the release point
+static float   home_still_at = 0.0f;  // position when motion last progressed
+static uint32_t home_still_ms = 0;    // ...and when that was
 static uint8_t home_count  = 0;       // debounce accumulator
 static bool    home_level  = false;   // debounced sensor state
 
@@ -459,6 +466,18 @@ static void homeSensorPoll() {
 }
 
 static bool homeTriggered() { return home_level; }
+
+// True once the axis has stopped making progress for HOME_STALL_MS while a
+// seek is commanding motion. At full seek current this is the thing bounding
+// how hard a missed trigger can push, so it matters more than the travel limit.
+static bool homeStalled(float pos) {
+  if (fabsf(pos - home_still_at) > HOME_STALL_RAD) {
+    home_still_at = pos;
+    home_still_ms = millis();
+    return false;
+  }
+  return (millis() - home_still_ms) > HOME_STALL_MS;
+}
 
 // Drop out of any in-flight seek. Callers that want a specific terminal state
 // (HOME_DONE, HOME_FAIL) set it after their allOff().
@@ -495,23 +514,32 @@ static void homeStart(float dir_vel) {
   // setMotionLimits() rather than setting voltage_limit alone, so the velocity
   // clamp and both PID limits belong to the seek instead of being inherited
   // from whatever mode ran last.
-  setMotionLimits(HOME_SEEK_VEL_RAD_S, AMPS(HOME_SEEK_mA));
+  // Seek current is host-settable via set_mA so it can be characterised without
+  // a reflash. It matters more than it looks: PID_velocity's output limit IS
+  // the current limit, so raising the current raises the loop's authority --
+  // and this loop is not tuned for an arbitrary one.
+  uint16_t seek_ma = g_telem.set_mA ? g_telem.set_mA : HOME_SEEK_mA;
+  if (seek_ma > CURRENT_CEILING_mA) seek_ma = CURRENT_CEILING_mA;
+  g_telem.drive_mA = seek_ma;
+  setMotionLimits(HOME_FAST_VEL_RAD_S, AMPS(seek_ma));
   motor.controller    = MotionControlType::velocity;
   jog_mode = gear_mode = step_mode = false;
   markEnergised(); foc_running = true; motor.enable();
-  home_vel = home_dir * HOME_SEEK_VEL_RAD_S;
+  home_vel = home_dir * HOME_FAST_VEL_RAD_S;
 
   home_released = false;
-  home_state = HOME_SEEK;
-  g_telem.home_state = HOME_SEEK;
+  home_still_at = home_start;
+  home_still_ms = millis();
+  home_state = HOME_FAST;
+  g_telem.home_state = HOME_FAST;
   Serial.print(F("homing ")); Serial.print(home_dir > 0 ? F("+") : F("-"));
-  Serial.print(F(" at ")); Serial.print(HOME_SEEK_mA); Serial.print(F(" mA, "));
+  Serial.print(F(" at ")); Serial.print(g_telem.drive_mA); Serial.print(F(" mA, "));
   Serial.print(RAD_TO_MM(HOME_SEEK_VEL_RAD_S), 2); Serial.print(F(" mm/s, abort after "));
   Serial.print(RAD_TO_MM(HOME_MAX_TRAVEL_RAD), 1); Serial.println(F(" mm"));
 }
 
 static void homeUpdate() {
-  if (home_state != HOME_SEEK && home_state != HOME_BACKOFF) return;
+  if (home_state == HOME_IDLE || home_state == HOME_DONE || home_state == HOME_FAIL) return;
 
   // Keep the drive watchdog fed while a seek is genuinely in progress.
   //
@@ -524,7 +552,51 @@ static void homeUpdate() {
   // This does not weaken the watchdog: a seek is bounded by its own travel
   // limit and ends on its own, and every other path still times out normally.
   markEnergised();
-  float travelled = shaftNow() - home_start;
+  float pos = shaftNow();
+  float travelled = pos - home_start;
+
+  // Any stage that commands motion must give up if motion stops. At full seek
+  // current this is what keeps a missed trigger from driving into a hard stop.
+  if (home_state != HOME_RETREAT && homeStalled(pos)) {
+    homeAbort(F("axis stopped moving -- obstruction, or a sensor that never fired"));
+    return;
+  }
+
+  // --- stage 1: fast coarse search ----------------------------------------
+  if (home_state == HOME_FAST) {
+    if (homeTriggered()) {
+      // Found it, but at speed the trip point is blurred by detection latency.
+      // Retreat clear and let the slow stage make the actual measurement.
+      setMotionLimits(HOME_FAST_VEL_RAD_S, AMPS(g_telem.drive_mA));
+      home_vel      = -home_dir * HOME_FAST_VEL_RAD_S;
+      home_start    = pos;
+      home_still_at = pos;
+      home_still_ms = millis();
+      home_state = HOME_RETREAT;
+      g_telem.home_state = HOME_RETREAT;
+      return;
+    }
+    if (fabsf(travelled) > HOME_MAX_TRAVEL_RAD)
+      homeAbort(F("no trigger within the travel limit -- sensor wiring?"));
+    return;
+  }
+
+  // --- stage 2: retreat clear of the sensor --------------------------------
+  if (home_state == HOME_RETREAT) {
+    if (!homeTriggered() && fabsf(travelled) >= HOME_RESEEK_BACKOFF_RAD) {
+      setMotionLimits(HOME_SEEK_VEL_RAD_S, AMPS(g_telem.drive_mA));
+      home_vel      = home_dir * HOME_SEEK_VEL_RAD_S;
+      home_start    = pos;
+      home_still_at = pos;
+      home_still_ms = millis();
+      home_state = HOME_SEEK;
+      g_telem.home_state = HOME_SEEK;
+      return;
+    }
+    if (fabsf(travelled) > HOME_RESEEK_BACKOFF_RAD * 4.0f)
+      homeAbort(F("sensor never released while retreating"));
+    return;
+  }
 
   if (home_state == HOME_SEEK) {
     if (homeTriggered()) {
@@ -542,8 +614,11 @@ static void homeUpdate() {
     }
     // The sensor may be unplugged, or the magnet may have moved. Either way,
     // stop before the mechanics do it for us.
-    if (fabsf(travelled) > HOME_MAX_TRAVEL_RAD) {
-      homeAbort(F("no trigger within the travel limit -- sensor wiring?"));
+    // The slow stage only has to recover the retreat distance, so its bound is
+    // tight: if the sensor fired once at speed and not again on the careful
+    // approach, something is wrong and it must not keep going.
+    if (fabsf(travelled) > HOME_RESEEK_BACKOFF_RAD * 3.0f) {
+      homeAbort(F("sensor did not fire again on the slow approach"));
     }
     return;
   }
@@ -660,6 +735,11 @@ void setup() {
   Serial.println(F("UART control ready. 'D?' for help, 'M' for SimpleFOC motor verbs."));
 
   enc.init();
+  // Clear any latched sensor error from power-up before anything consumes an
+  // angle. Without this a latched flag makes every validated read fail, the
+  // angle freezes at its first value, and the drive looks like a mechanical
+  // fault rather than a status bit.
+  enc.clearStatus();
 
   // Load the encoder correction table before anything can command motion.
   // Without it this drive may not turn at all -- 50 pole pairs multiply the
@@ -721,6 +801,15 @@ void loop() {
     if (r < g_telem.raw_min) g_telem.raw_min = r;
     if (r > g_telem.raw_max) g_telem.raw_max = r;
   }
+  // These were declared and never assigned, so they read 0 on every board and
+  // every run -- which looks exactly like a healthy encoder. That dead
+  // telemetry cost a wrong diagnosis: a sweep returning a constant angle was
+  // read as "reads are fine, the rotor must not be turning", when the counters
+  // simply had no way to say otherwise.
+  g_telem.safety       = enc.lastSafety();
+  g_telem.crc_fails    = enc.crcFails();
+  g_telem.status_fails = enc.statusFails();
+  g_telem.linkfail     = enc.linkFails();
   g_telem.cal_active = tle_cal_enable ? 1 : 0;
   g_telem.angle = enc.getAngle();      // multi-turn, no extra bus traffic
   g_telem.shaft = shaftNow();   // CONTROL frame; .angle stays raw
@@ -968,7 +1057,13 @@ void loop() {
       motor.P_angle.I = (err < ANGLE_I_BAND_RAD) ? ANGLE_PID_I : 0.0f;
     }
     motor.loopFOC();
-    bool homing = (home_state == HOME_SEEK || home_state == HOME_BACKOFF);
+    // EVERY homing stage that commands motion must be listed here. Miss one
+    // and the loop falls through to motor.move(g_telem.target) -- a stale
+    // position target from whatever ran last -- so the axis drives off to an
+    // unrelated place at full authority. That is exactly what adding the fast
+    // and retreat stages without updating this line did.
+    bool homing = (home_state == HOME_FAST    || home_state == HOME_RETREAT ||
+                   home_state == HOME_SEEK    || home_state == HOME_BACKOFF);
     if (homing)         motor.move(home_vel);
     else if (gear_mode) motor.move(gearVelocityCmd());
     else if (jog_mode)  motor.move(g_telem.jog_vel);
